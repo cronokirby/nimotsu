@@ -1,18 +1,29 @@
 use std::ops::{Add, AddAssign};
 
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64 as arch;
+
 /// adc computes out <- a + b + carry, outputting a new carry.
 ///
 /// While carry is a `u8`, it should only be 0, or 1. The output also
 /// satisfies this constraint.
 #[inline]
 fn adc(carry: u8, a: u64, b: u64, out: &mut u64) -> u8 {
-    // The largest result is 2 * (2^64 - 1) + 1 = 2^65 - 1, which needs exactly 65 bits
-    // Hence, we use u128. Hopefully, Rust will realize that we don't really want to use
-    // 128 bit operations, but rather want to use an `adc` instruction, or whatever equivalent
-    // our ISA has, and insert that instead.
-    let full_res = u128::from(a) + u128::from(b) + u128::from(carry);
-    *out = full_res as u64;
-    (full_res >> 64) as u8
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Using this intrinsic is perfectly safe
+        unsafe { arch::_addcarry_u64(carry, a, b, out) }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // The largest result is 2 * (2^64 - 1) + 1 = 2^65 - 1, which needs exactly 65 bits
+        // Hence, we use u128. Hopefully, Rust will realize that we don't really want to use
+        // 128 bit operations, but rather want to use an `adc` instruction, or whatever equivalent
+        // our ISA has, and insert that instead.
+        let full_res = u128::from(a) + u128::from(b) + u128::from(carry);
+        *out = full_res as u64;
+        (full_res >> 64) as u8
+    }
 }
 
 /// Represents an element in the field Z/(2^255 - 19).
@@ -79,8 +90,6 @@ const P25519: Z25519 = Z25519 {
 };
 
 mod test {
-    use super::Z25519;
-
     #[test]
     fn test_addition() {
         let z1 = Z25519 {
@@ -90,7 +99,7 @@ mod test {
             limbs: [2, 2, 2, 2],
         };
         let z3 = Z25519 {
-            limbs: [3, 3, 3, 3]
+            limbs: [3, 3, 3, 3],
         };
         assert_eq!(z3, z1 + z2)
     }
