@@ -1,4 +1,5 @@
 use std::ops::{Add, AddAssign};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64 as arch;
@@ -26,6 +27,26 @@ fn adc(carry: u8, a: u64, b: u64, out: &mut u64) -> u8 {
     }
 }
 
+#[inline]
+fn sbb(borrow: u8, a: u64, b: u64, out: &mut u64) -> u8 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Using this intrinsic is perfectly safe
+        unsafe { arch::_subborrow_u64(borrow, a, b, out) }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Like with addition, we use a larger type to be able to have carry information
+        // We also hope that Rust can figure out what we're doing, and replace this
+        // sequence with an `sbb` instruction
+        let full_res = i128::from(a) - i128::from(b) - i128::from(borrow);
+        *out = full_res as u64;
+        // NOTE: This might leak with odd code generation?
+        // If this compiles to a branch instruction, then that would be an issue
+        u8::from(full_res < 0)
+    }
+}
+
 /// Represents an element in the field Z/(2^255 - 19).
 ///
 /// The operations in this field are defined through arithmetic modulo
@@ -48,6 +69,23 @@ pub struct Z25519 {
     limbs: [u64; 4],
 }
 
+impl Z25519 {
+    /// Return a field element initialized to zero
+    pub fn zero() -> Z25519 {
+        Z25519 { limbs: [0; 4] }
+    }
+
+    fn sub_with_borrow(self, other: Z25519) -> (u8, Z25519) {
+        let mut out = Self::zero();
+        let mut borrow = 0;
+        // Hopefully Rust unrolls this loop
+        for i in 0..4 {
+            borrow = sbb(borrow, self.limbs[i], other.limbs[i], &mut out.limbs[i]);
+        }
+        (borrow, out)
+    }
+}
+
 impl From<u64> for Z25519 {
     fn from(x: u64) -> Self {
         Z25519 {
@@ -56,15 +94,30 @@ impl From<u64> for Z25519 {
     }
 }
 
+impl ConditionallySelectable for Z25519 {
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Z25519 {
+            limbs: [
+                u64::conditional_select(&a.limbs[0], &b.limbs[0], choice),
+                u64::conditional_select(&a.limbs[1], &b.limbs[1], choice),
+                u64::conditional_select(&a.limbs[2], &b.limbs[2], choice),
+                u64::conditional_select(&a.limbs[3], &b.limbs[3], choice),
+            ],
+        }
+    }
+}
+
 impl AddAssign for Z25519 {
-    fn add_assign(&mut self, rhs: Z25519) {
+    fn add_assign(&mut self, other: Z25519) {
         let mut carry: u8 = 0;
         // Let's have confidence in Rust's ability to unroll this loop.
         for i in 0..4 {
             // Each intermediate result may generate up to 65 bits of output.
             // We need to daisy-chain the carries together, to get the right result.
-            carry = adc(carry, self.limbs[i], rhs.limbs[i], &mut self.limbs[i]);
+            carry = adc(carry, self.limbs[i], other.limbs[i], &mut self.limbs[i]);
         }
+        let (borrow, m_removed) = self.sub_with_borrow(P25519);
+        self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
 }
 
@@ -106,6 +159,16 @@ mod test {
         let z3 = Z25519 {
             limbs: [3, 3, 3, 3],
         };
-        assert_eq!(z3, z1 + z2)
+        assert_eq!(z3, z1 + z2);
+
+        let two_254 =  Z25519 {
+            limbs: [
+                0,
+                0,
+                0,
+                1 << 62
+            ]
+        };
+        assert_eq!(two_254 + two_254, Z25519::from(19));
     }
 }
