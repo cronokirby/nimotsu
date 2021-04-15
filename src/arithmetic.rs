@@ -59,8 +59,10 @@ impl From<u64> for Z25519 {
 impl AddAssign for Z25519 {
     fn add_assign(&mut self, rhs: Z25519) {
         let mut carry: u8 = 0;
-        // Let's have confidence in Rust's ability to unroll this loop
+        // Let's have confidence in Rust's ability to unroll this loop.
         for i in 0..4 {
+            // Each intermediate result may generate up to 65 bits of output.
+            // We need to daisy-chain the carries together, to get the right result.
             carry = adc(carry, self.limbs[i], rhs.limbs[i], &mut self.limbs[i]);
         }
     }
@@ -79,7 +81,7 @@ impl Add for Z25519 {
 // The prime number 2^255 - 19.
 //
 // We have this around, because for some operations, like modular addition,
-// it's convenient to be able to do arithmetic using it
+// it's convenient to be able to do arithmetic using it.
 const P25519: Z25519 = Z25519 {
     limbs: [
         0xFFFF_FFFF_FFFF_FFED,
@@ -89,7 +91,10 @@ const P25519: Z25519 = Z25519 {
     ],
 };
 
+#[cfg(test)]
 mod test {
+    use super::Z25519;
+
     #[test]
     fn test_addition() {
         let z1 = Z25519 {
