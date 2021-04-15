@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
@@ -72,19 +72,32 @@ pub struct Z25519 {
 }
 
 impl Z25519 {
-    /// Return a field element initialized to zero
-    pub fn zero() -> Z25519 {
-        Z25519 { limbs: [0; 4] }
-    }
-
-    fn sub_with_borrow(self, other: Z25519) -> (u8, Z25519) {
-        let mut out = Self::zero();
+    /// sub_with_borrow subtracts other from this elements in place, returning a borrow 
+    ///
+    /// A borrow is generated (returning 1), when this subtraction underflows.
+    fn sub_with_borrow(&mut self, other: Z25519) -> u8 {
         let mut borrow = 0;
         // Hopefully Rust unrolls this loop
         for i in 0..4 {
-            borrow = sbb(borrow, self.limbs[i], other.limbs[i], &mut out.limbs[i]);
+            // Each intermediate subtraction may underflow that limb, produces a borrow
+            // which we need to daisy chain through the other subtractions.
+            borrow = sbb(borrow, self.limbs[i], other.limbs[i], &mut self.limbs[i]);
         }
-        (borrow, out)
+        borrow
+    }
+
+    /// cond_add adds another field element into this one, if choice is set.
+    ///
+    /// If choice is not set, then this function has no effect.
+    ///
+    /// This is done without leaking whether or not the addition happened.
+    fn cond_add(&mut self, other: Z25519, choice: Choice) {
+        let mut carry = 0;
+        for i in 0..4 {
+            // When choice is not set, we just add 0 each time, doing nothing
+            let to_add = u64::conditional_select(&0, &other.limbs[i], choice);
+            carry = adc(carry, self.limbs[i], to_add, &mut self.limbs[i]);
+        }
     }
 }
 
@@ -118,9 +131,10 @@ impl AddAssign for Z25519 {
             // We need to daisy-chain the carries together, to get the right result.
             carry = adc(carry, self.limbs[i], other.limbs[i], &mut self.limbs[i]);
         }
+        let mut m_removed = *self;
         // The largest result we've just calculated is 2P - 2. Therefore, we might
-        // need to subtract P once, if we have a result >= P. 
-        let (borrow, m_removed) = self.sub_with_borrow(P25519);
+        // need to subtract P once, if we have a result >= P.
+        let borrow = m_removed.sub_with_borrow(P25519);
         // A few cases here:
         //
         // carry = 1, borrow = 0:
@@ -141,9 +155,27 @@ impl AddAssign for Z25519 {
 impl Add for Z25519 {
     type Output = Self;
 
-    fn add(self, rhs: Z25519) -> Self::Output {
+    fn add(self, other: Z25519) -> Self::Output {
         let mut out = self;
-        out += rhs;
+        out += other;
+        out
+    }
+}
+
+impl SubAssign for Z25519 {
+    fn sub_assign(&mut self, other: Z25519) {
+        // We perform the subtraction, and then add back P if we underflowed.
+        let borrow = self.sub_with_borrow(other);
+        self.cond_add(P25519, borrow.ct_eq(&1));
+    }
+}
+
+impl Sub for Z25519 {
+    type Output = Self;
+
+    fn sub(self, other: Z25519) -> Self::Output {
+        let mut out = self;
+        out -= other;
         out
     }
 }
@@ -178,14 +210,28 @@ mod test {
         };
         assert_eq!(z3, z1 + z2);
 
-        let two_254 =  Z25519 {
-            limbs: [
-                0,
-                0,
-                0,
-                1 << 62
-            ]
+        let two_254 = Z25519 {
+            limbs: [0, 0, 0, 1 << 62],
         };
         assert_eq!(two_254 + two_254, Z25519::from(19));
+    }
+
+    #[test]
+    fn test_subtraction() {
+        let mut z1 = Z25519 {
+            limbs: [1, 1, 1, 1],
+        };
+        z1 -= z1;
+        assert_eq!(z1, 0.into());
+        z1 -= 1.into();
+        let p_minus_one = Z25519 {
+            limbs: [
+                0xFFFF_FFFF_FFFF_FFEC,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0x7FFF_FFFF_FFFF_FFFF,
+            ],
+        };
+        assert_eq!(z1, p_minus_one);
     }
 }
