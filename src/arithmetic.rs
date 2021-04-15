@@ -6,8 +6,7 @@ use core::arch::x86_64 as arch;
 
 /// adc computes out <- a + b + carry, outputting a new carry.
 ///
-/// While carry is a `u8`, it should only be 0, or 1. The output also
-/// satisfies this constraint.
+/// `carry` must be 0, or 1. The return value will satisfy this constraint
 #[inline]
 fn adc(carry: u8, a: u64, b: u64, out: &mut u64) -> u8 {
     #[cfg(target_arch = "x86_64")]
@@ -27,6 +26,9 @@ fn adc(carry: u8, a: u64, b: u64, out: &mut u64) -> u8 {
     }
 }
 
+/// sbb computes out <- a - b - borrow, outputting a new borrow value
+///
+/// `borrow` must be 0, or 1. The return value will satisfy this constraint
 #[inline]
 fn sbb(borrow: u8, a: u64, b: u64, out: &mut u64) -> u8 {
     #[cfg(target_arch = "x86_64")]
@@ -116,7 +118,22 @@ impl AddAssign for Z25519 {
             // We need to daisy-chain the carries together, to get the right result.
             carry = adc(carry, self.limbs[i], other.limbs[i], &mut self.limbs[i]);
         }
+        // The largest result we've just calculated is 2P - 2. Therefore, we might
+        // need to subtract P once, if we have a result >= P. 
         let (borrow, m_removed) = self.sub_with_borrow(P25519);
+        // A few cases here:
+        //
+        // carry = 1, borrow = 0:
+        //    Impossible: we would need a result >= 2^256 + P
+        // carry = 1, borrow = 1:
+        //     We produced a result larger than 2^256, with an extra bit, so certainly
+        //     we should subtract P. This will always produce a borrow, given our input ranges.
+        // carry = 0, borrow = 1:
+        //     Our result fits over 4 limbs, but is < P.
+        //     We don't want to choose the subtraction
+        // carry = 0, borrow = 0:
+        //     Our result fits over 4 limbs, but is >= P.
+        //     We want to choose the subtraction.
         self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
 }
