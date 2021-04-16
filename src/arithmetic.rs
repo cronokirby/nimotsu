@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
@@ -49,6 +49,14 @@ fn sbb(borrow: u8, a: u64, b: u64, out: &mut u64) -> u8 {
     }
 }
 
+/// mulc computs out <- a * b + carry, outputting a new carry limb
+#[inline]
+fn mulc(carry: u64, a: u64, b: u64, out: &mut u64) -> u64 {
+    let full_res = u128::from(a) * u128::from(b) + u128::from(carry);
+    *out = full_res as u64;
+    (full_res >> 64) as u64
+}
+
 /// Represents an element in the field Z/(2^255 - 19).
 ///
 /// The operations in this field are defined through arithmetic modulo
@@ -72,7 +80,7 @@ pub struct Z25519 {
 }
 
 impl Z25519 {
-    /// sub_with_borrow subtracts other from this elements in place, returning a borrow 
+    /// sub_with_borrow subtracts other from this elements in place, returning a borrow
     ///
     /// A borrow is generated (returning 1), when this subtraction underflows.
     fn sub_with_borrow(&mut self, other: Z25519) -> u8 {
@@ -98,6 +106,27 @@ impl Z25519 {
             let to_add = u64::conditional_select(&0, &other.limbs[i], choice);
             carry = adc(carry, self.limbs[i], to_add, &mut self.limbs[i]);
         }
+    }
+
+    fn reduce_after_addition(&mut self, carry: u8) {
+        let mut m_removed = *self;
+        // The largest result we've just calculated is 2P - 2. Therefore, we might
+        // need to subtract P once, if we have a result >= P.
+        let borrow = m_removed.sub_with_borrow(P25519);
+        // A few cases here:
+        //
+        // carry = 1, borrow = 0:
+        //    Impossible: we would need a result >= 2^256 + P
+        // carry = 1, borrow = 1:
+        //     We produced a result larger than 2^256, with an extra bit, so certainly
+        //     we should subtract P. This will always produce a borrow, given our input ranges.
+        // carry = 0, borrow = 1:
+        //     Our result fits over 4 limbs, but is < P.
+        //     We don't want to choose the subtraction
+        // carry = 0, borrow = 0:
+        //     Our result fits over 4 limbs, but is >= P.
+        //     We want to choose the subtraction.
+        self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
 }
 
@@ -131,34 +160,16 @@ impl AddAssign for Z25519 {
             // We need to daisy-chain the carries together, to get the right result.
             carry = adc(carry, self.limbs[i], other.limbs[i], &mut self.limbs[i]);
         }
-        let mut m_removed = *self;
-        // The largest result we've just calculated is 2P - 2. Therefore, we might
-        // need to subtract P once, if we have a result >= P.
-        let borrow = m_removed.sub_with_borrow(P25519);
-        // A few cases here:
-        //
-        // carry = 1, borrow = 0:
-        //    Impossible: we would need a result >= 2^256 + P
-        // carry = 1, borrow = 1:
-        //     We produced a result larger than 2^256, with an extra bit, so certainly
-        //     we should subtract P. This will always produce a borrow, given our input ranges.
-        // carry = 0, borrow = 1:
-        //     Our result fits over 4 limbs, but is < P.
-        //     We don't want to choose the subtraction
-        // carry = 0, borrow = 0:
-        //     Our result fits over 4 limbs, but is >= P.
-        //     We want to choose the subtraction.
-        self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
+        self.reduce_after_addition(carry);
     }
 }
 
 impl Add for Z25519 {
     type Output = Self;
 
-    fn add(self, other: Z25519) -> Self::Output {
-        let mut out = self;
-        out += other;
-        out
+    fn add(mut self, other: Z25519) -> Self::Output {
+        self += other;
+        self
     }
 }
 
@@ -173,10 +184,57 @@ impl SubAssign for Z25519 {
 impl Sub for Z25519 {
     type Output = Self;
 
-    fn sub(self, other: Z25519) -> Self::Output {
-        let mut out = self;
-        out -= other;
-        out
+    fn sub(mut self, other: Z25519) -> Self::Output {
+        self -= other;
+        self
+    }
+}
+
+impl MulAssign<u64> for Z25519 {
+    fn mul_assign(&mut self, small: u64) {
+        // Let's say that:
+        //     s⋅A = q⋅2²⁵⁵ + R
+        // This means that:
+        //     s⋅A = q⋅P + R + 19q
+        // Modulo P, this entails:
+        //     s⋅A ≡ R + 19q mod P
+        // We can efficiently calculate k and R using shifting and masking.
+        // Note that q ≤ s, so 19q fits over 2 limbs, and the addition can
+        // be reduced by subtracting P at most once.
+
+        // First, multiply this number by small
+        let mut carry = 0;
+        // Hopefully this gets unrolled
+        for i in 0..4 {
+            carry = mulc(carry, small, self.limbs[i], &mut self.limbs[i]);
+        }
+        // We pull in one bit from the top limb, in order to calculate the quotient
+        let q = (carry << 1) | (self.limbs[3] >> 63);
+        // Clear the top bit, thus calculating R
+        self.limbs[3] &= 0x7FFF_FFFF_FFFF_FFFF;
+        // Now we add in 19q
+        let full_res = 19 * u128::from(q);
+        let mut carry = 0;
+        carry = adc(carry, full_res as u64, self.limbs[0], &mut self.limbs[0]);
+        carry = adc(
+            carry,
+            (full_res >> 64) as u64,
+            self.limbs[1],
+            &mut self.limbs[1],
+        );
+        carry = adc(carry, 0, self.limbs[2], &mut self.limbs[2]);
+        carry = adc(carry, 0, self.limbs[3], &mut self.limbs[3]);
+        // Now remove P if necessary
+        self.reduce_after_addition(carry);
+    }
+}
+
+impl Mul<u64> for Z25519 {
+    type Output = Z25519;
+
+    fn mul(mut self, small: u64) -> Self::Output {
+        self *= small;
+        self
     }
 }
 
@@ -233,5 +291,22 @@ mod test {
             ],
         };
         assert_eq!(z1, p_minus_one);
+    }
+
+    #[test]
+    fn test_small_multiplication() {
+        let z1 = Z25519 { limbs: [1; 4] };
+        assert_eq!(z1 + z1, z1 * 2);
+        assert_eq!(z1 + z1 + z1, z1 * 3);
+        let p_minus_one = Z25519 {
+            limbs: [
+                0xFFFF_FFFF_FFFF_FFEC,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0x7FFF_FFFF_FFFF_FFFF,
+            ],
+        };
+        assert_eq!(p_minus_one * 2, p_minus_one - 1.into());
+        assert_eq!(p_minus_one * 3, p_minus_one - 2.into());
     }
 }
