@@ -108,6 +108,9 @@ impl Z25519 {
         }
     }
 
+    /// reduce_after_addition reduces this element modulo P, after an addition.
+    ///
+    /// After an addition, we have at most 2P - 2, so at most one subtraction of P suffices.
     fn reduce_after_addition(&mut self, carry: u8) {
         let mut m_removed = *self;
         // The largest result we've just calculated is 2P - 2. Therefore, we might
@@ -116,7 +119,7 @@ impl Z25519 {
         // A few cases here:
         //
         // carry = 1, borrow = 0:
-        //    Impossible: we would need a result >= 2^256 + P
+        //    Impossible: we would need a result ≥ 2²⁵⁶ + P
         // carry = 1, borrow = 1:
         //     We produced a result larger than 2^256, with an extra bit, so certainly
         //     we should subtract P. This will always produce a borrow, given our input ranges.
@@ -124,7 +127,7 @@ impl Z25519 {
         //     Our result fits over 4 limbs, but is < P.
         //     We don't want to choose the subtraction
         // carry = 0, borrow = 0:
-        //     Our result fits over 4 limbs, but is >= P.
+        //     Our result fits over 4 limbs, but is ≥ P.
         //     We want to choose the subtraction.
         self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
