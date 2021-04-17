@@ -257,9 +257,29 @@ const P25519: Z25519 = Z25519 {
 #[cfg(test)]
 mod test {
     use super::Z25519;
+    use proptest::prelude::*;
+
+    prop_compose! {
+        fn arb_z25519()(
+            z0 in 0..(!0u64 - 19),
+            z1 in any::<u64>(),
+            z2 in any::<u64>(),
+            z3 in 0..((1u64 << 63) - 19)) -> Z25519 {
+            Z25519 {
+                limbs: [z0, z1, z2, z3]
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_addition_commutative(a in arb_z25519(), b in arb_z25519()) {
+            assert_eq!(a + b, b + a);
+        }
+    }
 
     #[test]
-    fn test_addition() {
+    fn test_addition_examples() {
         let z1 = Z25519 {
             limbs: [1, 1, 1, 1],
         };
@@ -278,7 +298,7 @@ mod test {
     }
 
     #[test]
-    fn test_subtraction() {
+    fn test_subtraction_examples() {
         let mut z1 = Z25519 {
             limbs: [1, 1, 1, 1],
         };
@@ -297,7 +317,7 @@ mod test {
     }
 
     #[test]
-    fn test_small_multiplication() {
+    fn test_small_multiplication_examples() {
         let z1 = Z25519 { limbs: [1; 4] };
         assert_eq!(z1 + z1, z1 * 2);
         assert_eq!(z1 + z1 + z1, z1 * 3);
