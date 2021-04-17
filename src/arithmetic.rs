@@ -308,6 +308,22 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_multiplying_scaling(a in arb_z25519(), u in any::<u32>(), v in any::<u32>()) {
+            let u = u as u64;
+            let v = v as u64;
+            assert_eq!((a * u) * v, a * (u * v))
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_adding_scaling(a in arb_z25519(), u in 0..(1u64 << 63), v in 0..(1u64 << 63)) {
+            assert_eq!(a * (u + v), a * u + a * v)
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
