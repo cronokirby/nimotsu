@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
@@ -193,6 +193,15 @@ impl Sub for Z25519 {
     }
 }
 
+impl Neg for Z25519 {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        // NOTE: Hopefully Rust inlines things, to avoid materializing 4 zeros in memory
+        Self::from(0) - self
+    }
+}
+
 impl MulAssign<u64> for Z25519 {
     fn mul_assign(&mut self, small: u64) {
         // Let's say that:
@@ -324,6 +333,13 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_adding_negation(a in arb_z25519()) {
+            assert_eq!(a + -a, 0.into())
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
@@ -377,5 +393,18 @@ mod test {
         };
         assert_eq!(p_minus_one * 2, p_minus_one - 1.into());
         assert_eq!(p_minus_one * 3, p_minus_one - 2.into());
+    }
+
+    #[test]
+    fn test_negative_one() {
+        let p_minus_one = Z25519 {
+            limbs: [
+                0xFFFF_FFFF_FFFF_FFEC,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0xFFFF_FFFF_FFFF_FFFF,
+                0x7FFF_FFFF_FFFF_FFFF,
+            ],
+        };
+        assert_eq!(-Z25519::from(1), p_minus_one);
     }
 }
