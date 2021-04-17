@@ -278,6 +278,36 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_addition_associative(a in arb_z25519(), b in arb_z25519(), c in arb_z25519()) {
+            assert_eq!(a + (b + c), (a + b) + c);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_add_zero_identity(a in arb_z25519()) {
+            let zero = Z25519::from(0);
+            assert_eq!(a + zero, a);
+            assert_eq!(zero + a, a);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_subtract_self_is_zero(a in arb_z25519()) {
+            assert_eq!(a - a, 0.into());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_doubling_is_just_addition(a in arb_z25519()) {
+            assert_eq!(a * 2, a + a);
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
