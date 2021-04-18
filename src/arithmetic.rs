@@ -250,6 +250,85 @@ impl Mul<u64> for Z25519 {
     }
 }
 
+impl MulAssign for Z25519 {
+    fn mul_assign(&mut self, other: Z25519) {
+        #[inline(always)]
+        fn multiply_in(a: u64, b: u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
+            let uv = u128::from(a) * u128::from(b);
+            let mut carry = 0;
+            carry = adc(carry, uv as u64, *r0, r0);
+            carry = adc(carry, (uv >> 64) as u64, *r1, r1);
+            *r2 += u64::from(carry);
+        }
+
+        #[inline(always)]
+        fn propagate(limb: &mut u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
+            *limb = *r0;
+            *r0 = *r1;
+            *r1 = *r2;
+            *r2 = 0;
+        }
+
+        let mut low = Z25519::from(0);
+
+        let mut r0 = 0u64;
+        let mut r1 = 0u64;
+        let mut r2 = 0u64;
+
+        multiply_in(self.limbs[0], other.limbs[0], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[0], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[0], other.limbs[1], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[1], other.limbs[0], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[1], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[0], other.limbs[2], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[1], other.limbs[1], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[2], other.limbs[0], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[2], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[0], other.limbs[3], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[1], other.limbs[2], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[2], other.limbs[1], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[3], other.limbs[0], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[3], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[1], other.limbs[3], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[2], other.limbs[2], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[3], other.limbs[1], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[0], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[2], other.limbs[3], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[3], other.limbs[2], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[1], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[3], other.limbs[3], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[2], &mut r0, &mut r1, &mut r2);
+
+        self.limbs[3] = r0;
+
+        // At this point, we've multiplied things out, and have:
+        //     self * 2^256 + low
+        // Observe that 2^256 = 2 * (2^255 - 19) + 38, so modulo P, we have:
+        //     low + 38 * self
+        // All that's left is to multiply self by 38 (modulo P), and then add in low
+        *self *= 38;
+        // It's possible that low is >= P, so we subtract P to reduce it, if necessary,
+        // before adding it to self.
+        low.reduce_after_addition(0);
+        *self += low;
+    }
+}
+
+impl Mul for Z25519 {
+    type Output = Z25519;
+
+    fn mul(mut self, other: Z25519) -> Self::Output {
+        self *= other;
+        self
+    }
+}
+
 // The prime number 2^255 - 19.
 //
 // We have this around, because for some operations, like modular addition,
@@ -340,6 +419,31 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_multiplication_commutative(a in arb_z25519(), b in arb_z25519()) {
+            assert_eq!(a * b, b * a);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_multiply_one_identity(a in arb_z25519()) {
+            let one = Z25519::from(1);
+            assert_eq!(a * one, a);
+            assert_eq!(one * a, a);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_multiply_minus_one_is_negation(a in arb_z25519()) {
+            let minus_one = -Z25519::from(1);
+            assert_eq!(minus_one * a, -a);
+            assert_eq!(a * minus_one, -a);
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
@@ -396,15 +500,10 @@ mod test {
     }
 
     #[test]
-    fn test_negative_one() {
-        let p_minus_one = Z25519 {
-            limbs: [
-                0xFFFF_FFFF_FFFF_FFEC,
-                0xFFFF_FFFF_FFFF_FFFF,
-                0xFFFF_FFFF_FFFF_FFFF,
-                0x7FFF_FFFF_FFFF_FFFF,
-            ],
+    fn test_2192_times_zero() {
+        let two192 = Z25519 {
+            limbs: [0, 0, 0, 1]
         };
-        assert_eq!(-Z25519::from(1), p_minus_one);
+        assert_eq!(two192 * Z25519::from(0), 0.into());
     }
 }
