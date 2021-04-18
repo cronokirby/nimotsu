@@ -131,6 +131,86 @@ impl Z25519 {
         //     We want to choose the subtraction.
         self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
+
+    /// calculate z <- z * z mod P.
+    ///
+    /// This is equivalent to z *= z, but is a bit more efficient, because it takes
+    /// advantage of the extra symmetry of this operation compared to the general case.
+    pub fn square(&mut self) {
+        // This function acts as a slight modification of `mul_assign`, doing doublings
+        // in some places to take advantage of symmetry.
+
+        // This calculates u:v = a * b, and then adds u:v to r2:r1:r0
+        #[inline(always)]
+        fn multiply_in(a: u64, b: u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
+            let uv = u128::from(a) * u128::from(b);
+            let mut carry = 0;
+            carry = adc(carry, uv as u64, *r0, r0);
+            carry = adc(carry, (uv >> 64) as u64, *r1, r1);
+            *r2 += u64::from(carry);
+        }
+
+        #[inline(always)]
+        fn double_multiply_in(a: u64, b: u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
+            let mut uv = u128::from(a) * u128::from(b);
+            let uv_top = (uv >> 127) as u64;
+            uv <<= 1;
+            let mut carry = 0;
+            carry = adc(carry, uv as u64, *r0, r0);
+            carry = adc(carry, (uv >> 64) as u64, *r1, r1);
+            *r2 += u64::from(carry) + uv_top;
+        }
+
+        // Given r2:r1:r0, this sets limb = r0, and then shifts to get 0:r2:r1
+        #[inline(always)]
+        fn propagate(limb: &mut u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
+            *limb = *r0;
+            *r0 = *r1;
+            *r1 = *r2;
+            *r2 = 0;
+        }
+
+        // See `mul_assign`.
+        let mut low = Z25519::from(0);
+
+        // This is essentially a 192 bit number
+        let mut r0 = 0u64;
+        let mut r1 = 0u64;
+        let mut r2 = 0u64;
+
+        // See `mul_assign`.
+
+        multiply_in(self.limbs[0], self.limbs[0], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[0], &mut r0, &mut r1, &mut r2);
+
+        double_multiply_in(self.limbs[0], self.limbs[1], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[1], &mut r0, &mut r1, &mut r2);
+
+        double_multiply_in(self.limbs[0], self.limbs[2], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[1], self.limbs[1], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[2], &mut r0, &mut r1, &mut r2);
+
+        double_multiply_in(self.limbs[0], self.limbs[3], &mut r0, &mut r1, &mut r2);
+        double_multiply_in(self.limbs[1], self.limbs[2], &mut r0, &mut r1, &mut r2);
+        propagate(&mut low.limbs[3], &mut r0, &mut r1, &mut r2);
+
+        double_multiply_in(self.limbs[1], self.limbs[3], &mut r0, &mut r1, &mut r2);
+        multiply_in(self.limbs[2], self.limbs[2], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[0], &mut r0, &mut r1, &mut r2);
+
+        double_multiply_in(self.limbs[2], self.limbs[3], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[1], &mut r0, &mut r1, &mut r2);
+
+        multiply_in(self.limbs[3], self.limbs[3], &mut r0, &mut r1, &mut r2);
+        propagate(&mut self.limbs[2], &mut r0, &mut r1, &mut r2);
+
+        self.limbs[3] = r0;
+
+        // See `mul_assign`.
+        *self *= 38;
+        low.reduce_after_addition(0);
+        *self += low;
+    }
 }
 
 impl From<u64> for Z25519 {
@@ -288,7 +368,7 @@ impl MulAssign for Z25519 {
         // This is an unrolling of big loop that looks like:
         //    for k = 0..6
         //      for i in 0..3, j in 0..3 with i + j = k:
-        //        multiply_in(self[i], other[j])      
+        //        multiply_in(self[i], other[j])
         //      propagate(out[k])
         //    propagate(out[7])
         //
@@ -479,6 +559,15 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_square_is_multiply(a in arb_z25519()) {
+            let mut squared = a;
+            squared.square();
+            assert_eq!(squared, a * a);
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
@@ -537,8 +626,15 @@ mod test {
     #[test]
     fn test_2192_times_zero() {
         let two192 = Z25519 {
-            limbs: [0, 0, 0, 1]
+            limbs: [0, 0, 0, 1],
         };
         assert_eq!(two192 * Z25519::from(0), 0.into());
+    }
+
+    #[test]
+    fn test_minus_one_squared() {
+        let mut minus_one = Z25519::from(0) - Z25519::from(1);
+        minus_one.square();
+        assert_eq!(minus_one, 1.into());
     }
 }
