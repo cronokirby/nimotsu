@@ -132,6 +132,39 @@ impl Z25519 {
         self.conditional_assign(&m_removed, borrow.ct_eq(&carry))
     }
 
+    /// reduce_after_scaling reduces this element modulo P, after a scaling.
+    ///
+    /// After a scaling, this number fits over 5 limbs, and there's an efficient way
+    /// to reduce it modulo P.
+    fn reduce_after_scaling(&mut self, carry: u64) {
+        // Let's say that:
+        //     A = q⋅2²⁵⁵ + R
+        // This means that:
+        //     A = q⋅P + R + 19q
+        // Modulo P, this entails:
+        //     A ≡ R + 19q mod P
+        // We can efficiently calculate q and R using shifting and masking.
+
+        // We pull in one bit from the top limb, in order to calculate the quotient
+        let q = (carry << 1) | (self.limbs[3] >> 63);
+        // Clear the top bit, thus calculating R
+        self.limbs[3] &= 0x7FFF_FFFF_FFFF_FFFF;
+        // Now we add in 19q
+        let full_res = 19 * u128::from(q);
+        let mut carry = 0;
+        carry = adc(carry, full_res as u64, self.limbs[0], &mut self.limbs[0]);
+        carry = adc(
+            carry,
+            (full_res >> 64) as u64,
+            self.limbs[1],
+            &mut self.limbs[1],
+        );
+        carry = adc(carry, 0, self.limbs[2], &mut self.limbs[2]);
+        carry = adc(carry, 0, self.limbs[3], &mut self.limbs[3]);
+        // Now remove P if necessary
+        self.reduce_after_addition(carry);
+    }
+
     /// calculate z <- z * z mod P.
     ///
     /// This is equivalent to z *= z, but is a bit more efficient, because it takes
@@ -207,9 +240,14 @@ impl Z25519 {
         self.limbs[3] = r0;
 
         // See `mul_assign`.
-        *self *= 38;
-        low.reduce_after_addition(0);
-        *self += low;
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let full_res =
+                u128::from(carry) + u128::from(low.limbs[i]) + 38 * u128::from(self.limbs[i]);
+            self.limbs[i] = full_res as u64;
+            carry = (full_res >> 64) as u64;
+        }
+        self.reduce_after_scaling(carry);
     }
 }
 
@@ -284,15 +322,7 @@ impl Neg for Z25519 {
 
 impl MulAssign<u64> for Z25519 {
     fn mul_assign(&mut self, small: u64) {
-        // Let's say that:
-        //     s⋅A = q⋅2²⁵⁵ + R
-        // This means that:
-        //     s⋅A = q⋅P + R + 19q
-        // Modulo P, this entails:
-        //     s⋅A ≡ R + 19q mod P
-        // We can efficiently calculate k and R using shifting and masking.
-        // Note that q ≤ s, so 19q fits over 2 limbs, and the addition can
-        // be reduced by subtracting P at most once.
+
 
         // First, multiply this number by small
         let mut carry = 0;
@@ -300,24 +330,7 @@ impl MulAssign<u64> for Z25519 {
         for i in 0..4 {
             carry = mulc(carry, small, self.limbs[i], &mut self.limbs[i]);
         }
-        // We pull in one bit from the top limb, in order to calculate the quotient
-        let q = (carry << 1) | (self.limbs[3] >> 63);
-        // Clear the top bit, thus calculating R
-        self.limbs[3] &= 0x7FFF_FFFF_FFFF_FFFF;
-        // Now we add in 19q
-        let full_res = 19 * u128::from(q);
-        let mut carry = 0;
-        carry = adc(carry, full_res as u64, self.limbs[0], &mut self.limbs[0]);
-        carry = adc(
-            carry,
-            (full_res >> 64) as u64,
-            self.limbs[1],
-            &mut self.limbs[1],
-        );
-        carry = adc(carry, 0, self.limbs[2], &mut self.limbs[2]);
-        carry = adc(carry, 0, self.limbs[3], &mut self.limbs[3]);
-        // Now remove P if necessary
-        self.reduce_after_addition(carry);
+        self.reduce_after_scaling(carry);
     }
 }
 
@@ -413,11 +426,14 @@ impl MulAssign for Z25519 {
         // Observe that 2²⁵⁶ = 2⋅(2²⁵⁵ - 19) + 38, so mod P, we have:
         //     low + 38⋅self
         // All that's left is to multiply self by 38, and then add in low
-        *self *= 38;
-        // It's possible that low is ≥ P, so we subtract P to reduce it, if necessary,
-        // before adding it to self.
-        low.reduce_after_addition(0);
-        *self += low;
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let full_res =
+                u128::from(carry) + u128::from(low.limbs[i]) + 38 * u128::from(self.limbs[i]);
+            self.limbs[i] = full_res as u64;
+            carry = (full_res >> 64) as u64;
+        }
+        self.reduce_after_scaling(carry);
     }
 }
 
