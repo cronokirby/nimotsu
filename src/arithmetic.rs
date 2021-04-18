@@ -252,6 +252,10 @@ impl Mul<u64> for Z25519 {
 
 impl MulAssign for Z25519 {
     fn mul_assign(&mut self, other: Z25519) {
+        // You can treat both of these functions as macros. They just exist to avoid
+        // repeating this logic multiple times.
+
+        // This calculates u:v = a * b, and then adds u:v to r2:r1:r0
         #[inline(always)]
         fn multiply_in(a: u64, b: u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
             let uv = u128::from(a) * u128::from(b);
@@ -261,6 +265,7 @@ impl MulAssign for Z25519 {
             *r2 += u64::from(carry);
         }
 
+        // Given r2:r1:r0, this sets limb = r0, and then shifts to get 0:r2:r1
         #[inline(always)]
         fn propagate(limb: &mut u64, r0: &mut u64, r1: &mut u64, r2: &mut u64) {
             *limb = *r0;
@@ -269,11 +274,27 @@ impl MulAssign for Z25519 {
             *r2 = 0;
         }
 
+        // We need 8 limbs to hold the full multiplication result, so we need an
+        // extra buffer. By using the extra buffer to store the low limbs,
+        // we can clobber self with the high limbs, without overwriting any limbs
+        // necessary for further calculations.
         let mut low = Z25519::from(0);
 
+        // This is essentially a 192 bit number
         let mut r0 = 0u64;
         let mut r1 = 0u64;
         let mut r2 = 0u64;
+
+        // This is an unrolling of big loop that looks like:
+        //    for k = 0..6
+        //      for i in 0..3, j in 0..3 with i + j = k:
+        //        multiply_in(self[i], other[j])      
+        //      propagate(out[k])
+        //    propagate(out[7])
+        //
+        // The rough idea here is to add in all of the factors that contribute to a given
+        // limb of the output, adding in carries from the previous step, and then propagating
+        // a carry to the next step.
 
         multiply_in(self.limbs[0], other.limbs[0], &mut r0, &mut r1, &mut r2);
         propagate(&mut low.limbs[0], &mut r0, &mut r1, &mut r2);
@@ -308,12 +329,12 @@ impl MulAssign for Z25519 {
         self.limbs[3] = r0;
 
         // At this point, we've multiplied things out, and have:
-        //     self * 2^256 + low
-        // Observe that 2^256 = 2 * (2^255 - 19) + 38, so modulo P, we have:
-        //     low + 38 * self
-        // All that's left is to multiply self by 38 (modulo P), and then add in low
+        //     self⋅2²⁵⁶ + low
+        // Observe that 2²⁵⁶ = 2⋅(2²⁵⁵ - 19) + 38, so mod P, we have:
+        //     low + 38⋅self
+        // All that's left is to multiply self by 38, and then add in low
         *self *= 38;
-        // It's possible that low is >= P, so we subtract P to reduce it, if necessary,
+        // It's possible that low is ≥ P, so we subtract P to reduce it, if necessary,
         // before adding it to self.
         low.reduce_after_addition(0);
         *self += low;
@@ -423,6 +444,20 @@ mod test {
         #[test]
         fn test_multiplication_commutative(a in arb_z25519(), b in arb_z25519()) {
             assert_eq!(a * b, b * a);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_multiplication_associative(a in arb_z25519(), b in arb_z25519(), c in arb_z25519()) {
+            assert_eq!(a * (b * c), (a * b) * c);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_multiplication_distributive(a in arb_z25519(), b in arb_z25519(), c in arb_z25519()) {
+            assert_eq!(a * (b + c), a * b + a * c);
         }
     }
 
