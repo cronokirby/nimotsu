@@ -249,6 +249,20 @@ impl Z25519 {
         }
         self.reduce_after_scaling(carry);
     }
+
+    pub fn exp(self, power: Z25519) -> Z25519 {
+        let mut out = Z25519::from(1);
+        let mut current_power = self;
+        for i in 0..4 {
+            // We can avoid a single iteration, since the last bit is never set
+            for j in 0..(64 - (i >> 2)) {
+                let multiply = ((power.limbs[i] >> j) & 1).ct_eq(&1);
+                out *= Z25519::conditional_select(&Z25519::from(1), &current_power, multiply);
+                current_power.square()
+            }
+        }
+        out
+    }
 }
 
 impl From<u64> for Z25519 {
@@ -584,6 +598,15 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_exp_additive(a in arb_z25519(), b in any::<u64>(), c in any::<u64>()) {
+            let b = Z25519::from(b);
+            let c = Z25519::from(c);
+            assert_eq!(a.exp(b + c), a.exp(b) * a.exp(c));
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
@@ -652,5 +675,13 @@ mod test {
         let mut minus_one = Z25519::from(0) - Z25519::from(1);
         minus_one.square();
         assert_eq!(minus_one, 1.into());
+    }
+
+    #[test]
+    fn test_two_255() {
+        let two_254 = Z25519 {
+            limbs: [0, 0, 0, 0x4000000000000000]
+        };
+        assert_eq!(two_254 * Z25519::from(2), 19.into());
     }
 }
