@@ -642,7 +642,13 @@ mod test {
 
     proptest! {
         #[test]
-        fn test_inverse(a in arb_z25519()) {
+        fn test_inverse(
+            a in arb_z25519()
+                .prop_filter(
+                    "zero cannot be inverted".to_owned(),
+                    |x: &Z25519| *x != 0.into()
+                )
+        ) {
             assert_eq!(a * a.inverse(), 1.into());
         }
     }
