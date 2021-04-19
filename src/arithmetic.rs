@@ -272,6 +272,32 @@ impl Z25519 {
         }
         out
     }
+
+    // inverse calculates self^-1 mod P, a number which multiplied by self returns 1
+    //
+    // This will work for every valid number, except 0.
+    pub fn inverse(self) -> Z25519 {
+        // By Fermat, we know that self ^ (P - 2) is an inverse.
+        // We can do binary exponentiation, using the fact that we have
+        // 0b01011, and then 250 one bits.
+        let mut out = Z25519::from(1);
+        let mut current_power = self;
+        // Handling 0b01011
+        out *= current_power;
+        current_power.square();
+        out *= current_power;
+        current_power.square();
+        current_power.square();
+        out *= current_power;
+        current_power.square();
+        current_power.square();
+        // Now, 250 one bits
+        for _ in 0..250 {
+            out *= current_power;
+            current_power.square();
+        }
+        out
+    }
 }
 
 impl From<u64> for Z25519 {
@@ -345,8 +371,6 @@ impl Neg for Z25519 {
 
 impl MulAssign<u64> for Z25519 {
     fn mul_assign(&mut self, small: u64) {
-
-
         // First, multiply this number by small
         let mut carry = 0;
         // Hopefully this gets unrolled
@@ -616,6 +640,13 @@ mod test {
         }
     }
 
+    proptest! {
+        #[test]
+        fn test_inverse(a in arb_z25519()) {
+            assert_eq!(a * a.inverse(), 1.into());
+        }
+    }
+
     #[test]
     fn test_addition_examples() {
         let z1 = Z25519 {
@@ -689,7 +720,7 @@ mod test {
     #[test]
     fn test_two_255() {
         let two_254 = Z25519 {
-            limbs: [0, 0, 0, 0x4000000000000000]
+            limbs: [0, 0, 0, 0x4000000000000000],
         };
         assert_eq!(two_254 * Z25519::from(2), 19.into());
     }
