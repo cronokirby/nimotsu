@@ -250,7 +250,16 @@ impl Z25519 {
         self.reduce_after_scaling(carry);
     }
 
+    /// exp calculates self ^ power (mod P).
+    ///
+    /// This is done efficiently through binary exponentiation, without leaking any values.
     pub fn exp(self, power: Z25519) -> Z25519 {
+        // We can calculate self ^ 2ᵇ just by squaring ourselves b times.
+        // Using the fact that self ^ (a + b) = self^a * self^b, we can multiply in all of
+        // the powers of two, which are calculated through squaring.
+        // We can do this incrementally, by going over each bit b of power, and multiplying
+        // in the corresponding self ^ 2ᵇ, if that bit is set, and then squaring
+        // self ^ 2ᵇ for the next iteration
         let mut out = Z25519::from(1);
         let mut current_power = self;
         for i in 0..4 {
