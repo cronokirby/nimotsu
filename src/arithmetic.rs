@@ -76,7 +76,7 @@ fn mulc(carry: u64, a: u64, b: u64, out: &mut u64) -> u64 {
 pub struct Z25519 {
     // This corresponds to a 4 "digit" number in base 2^64:
     //    limbs[3] * 2^192 + limbs[2] * 2^128 + limbs[1] * 2^64 + limbs[0]
-    limbs: [u64; 4],
+    pub limbs: [u64; 4],
 }
 
 impl Z25519 {
@@ -248,6 +248,12 @@ impl Z25519 {
             carry = (full_res >> 64) as u64;
         }
         self.reduce_after_scaling(carry);
+    }
+
+    /// squared returns self * self, but more efficently
+    pub fn squared(mut self) -> Self {
+        self.square();
+        self
     }
 
     /// exp calculates self ^ power (mod P).
