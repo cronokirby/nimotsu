@@ -1,7 +1,9 @@
+mod arithmetic;
+
 use rand::{CryptoRng, RngCore};
 use subtle::{Choice, ConditionallySelectable};
 
-use crate::arithmetic::Z25519;
+use arithmetic::Z25519;
 
 #[derive(Debug)]
 struct Scalar {
@@ -91,9 +93,7 @@ pub fn gen_keypair<R: RngCore + CryptoRng>(rng: &mut R) -> (PubKey, PrivKey) {
     let priv_key = PrivKey {
         bytes: scalar_bytes,
     };
-    let pub_key = PubKey {
-        bytes: pub_bytes,
-    };
+    let pub_key = PubKey { bytes: pub_bytes };
     (pub_key, priv_key)
 }
 
