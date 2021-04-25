@@ -1,3 +1,4 @@
+use std::{array::TryFromSliceError, convert::{TryFrom, TryInto}};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -305,6 +306,29 @@ impl Z25519 {
         out
     }
 }
+
+impl From<[u8; 32]> for Z25519 {
+    fn from(bytes: [u8; 32]) -> Self {
+        let mut out = Z25519 { limbs: [0; 4]};
+        for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+            out.limbs[i] = u64::from_le_bytes(chunk.try_into().unwrap())
+        }
+        // TODO: Perform reduction more efficiently
+        out.reduce_after_addition(0);
+        out.reduce_after_addition(0);
+        out
+    }
+}
+
+impl TryFrom<&[u8]> for Z25519 {
+    type Error = TryFromSliceError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let out: [u8; 32] = bytes.try_into()?;
+        Ok(Z25519::from(out))
+    }
+}
+
 
 impl From<u64> for Z25519 {
     fn from(x: u64) -> Self {
@@ -735,5 +759,16 @@ mod test {
             limbs: [0, 0, 0, 0x4000000000000000],
         };
         assert_eq!(two_254 * Z25519::from(2), 19.into());
+    }
+
+    #[test]
+    fn test_byte_conversion() {
+        let mut one = [0; 32];
+        one[0] = 1;
+        assert_eq!(Z25519::from(one), Z25519::from(1));
+        let mut two256 = [0xFF; 32];
+        assert_eq!(Z25519::from(two256), Z25519::from(37));
+        two256[31] = 0x7F;
+        assert_eq!(Z25519::from(two256), Z25519::from(18));
     }
 }
