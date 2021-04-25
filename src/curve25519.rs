@@ -1,3 +1,4 @@
+use rand::{CryptoRng, RngCore};
 use subtle::{Choice, ConditionallySelectable};
 
 use crate::arithmetic::Z25519;
@@ -72,12 +73,44 @@ impl From<&[u8]> for Scalar {
     }
 }
 
-pub fn x25519(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
-    let scalar = Scalar::from(*scalar);
-    let mut point_bytes = *point;
+#[derive(Debug)]
+pub struct PubKey {
+    bytes: [u8; 32],
+}
+
+#[derive(Debug)]
+pub struct PrivKey {
+    bytes: [u8; 32],
+}
+
+pub fn gen_keypair<R: RngCore + CryptoRng>(rng: &mut R) -> (PubKey, PrivKey) {
+    let mut scalar_bytes = [0u8; 32];
+    rng.fill_bytes(&mut scalar_bytes);
+    let scalar = Scalar::from(scalar_bytes);
+    let pub_bytes = scalar.act(9.into()).into();
+    let priv_key = PrivKey {
+        bytes: scalar_bytes,
+    };
+    let pub_key = PubKey {
+        bytes: pub_bytes,
+    };
+    (pub_key, priv_key)
+}
+
+#[derive(Debug)]
+pub struct SharedSecret {
+    bytes: [u8; 32],
+}
+
+pub fn exchange(my_priv: &PrivKey, their_pub: &PubKey) -> SharedSecret {
+    let scalar = Scalar::from(my_priv.bytes);
+    let mut point_bytes = their_pub.bytes;
     point_bytes[31] &= 0x7F;
     let point = Z25519::from(point_bytes);
-    scalar.act(point).into()
+    let shared_bytes = scalar.act(point).into();
+    SharedSecret {
+        bytes: shared_bytes,
+    }
 }
 
 #[cfg(test)]
@@ -101,7 +134,11 @@ mod test {
             0x08, 0x4F, 0x32, 0xEC, 0xCF, 0x03, 0x49, 0x1C, 0x71, 0xF7, 0x54, 0xB4, 0x07, 0x55,
             0x77, 0xA2, 0x85, 0x52,
         ];
-        assert_eq!(expected, x25519(&scalar_bytes, &point_bytes));
+        let priv_key = PrivKey {
+            bytes: scalar_bytes,
+        };
+        let pub_key = PubKey { bytes: point_bytes };
+        assert_eq!(expected, exchange(&priv_key, &pub_key).bytes);
     }
 
     #[test]
@@ -121,6 +158,10 @@ mod test {
             0x73, 0xF8, 0x8B, 0x59, 0x5A, 0x68, 0x79, 0x9F, 0xA1, 0x52, 0xE6, 0xF8, 0xF7, 0x64,
             0x7A, 0xAC, 0x79, 0x57,
         ];
-        assert_eq!(expected, x25519(&scalar_bytes, &point_bytes));
+        let priv_key = PrivKey {
+            bytes: scalar_bytes,
+        };
+        let pub_key = PubKey { bytes: point_bytes };
+        assert_eq!(expected, exchange(&priv_key, &pub_key).bytes);
     }
 }
