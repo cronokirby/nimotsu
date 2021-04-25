@@ -26,7 +26,8 @@ impl Scalar {
                 let mut a = x2 + z2;
                 let mut aa = a.squared();
                 let mut b = x2 - z2;
-                let bb = b.squared();
+                x2 = b;
+                x2.square();
                 a *= x3 - z3;
                 b *= x3 + z3;
                 x3 = a + b;
@@ -34,9 +35,9 @@ impl Scalar {
                 z3 = a - b;
                 z3.square();
                 z3 *= base_x;
-                x2 = aa * bb;
                 z2 = aa;
-                aa -= bb;
+                aa -= x2;
+                x2 *= z2;
                 z2 += aa * 121665;
                 z2 *= aa;
             }
