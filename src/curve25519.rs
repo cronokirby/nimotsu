@@ -24,19 +24,22 @@ impl Scalar {
                 Z25519::conditional_swap(&mut z2, &mut z3, choice);
                 swap = bit;
 
-                let a = x2 + z2;
-                let aa = a.squared();
-                let b = x2 - z2;
-                let bb = b * b;
-                let e = aa - bb;
-                let c = x3 + z3;
-                let d = x3 - z3;
-                let da = d * a;
-                let cb = c * b;
-                x3 = (da + cb).squared();
-                z3 = base_x * (da - cb).squared();
+                let mut a = x2 + z2;
+                let mut aa = a.squared();
+                let mut b = x2 - z2;
+                let bb = b.squared();
+                a *= x3 - z3;
+                b *= x3 + z3;
+                x3 = a + b;
+                x3.square();
+                z3 = a - b;
+                z3.square();
+                z3 *= base_x;
                 x2 = aa * bb;
-                z2 = e * (aa + e * 121665);
+                z2 = aa;
+                aa -= bb;
+                z2 += aa * 121665;
+                z2 *= aa;
             }
         }
         let choice = swap.into();
