@@ -1,4 +1,4 @@
-use subtle::ConditionallySelectable;
+use subtle::{Choice, ConditionallySelectable};
 
 use crate::arithmetic::Z25519;
 
@@ -14,14 +14,13 @@ impl Scalar {
         let mut x3 = base_x;
         let mut z3 = Z25519::from(1);
 
-        let mut swap: u8 = 0;
+        let mut swap = Choice::from(0);
         for byte in self.bytes.iter().rev() {
             for j in (0..8).rev() {
-                let bit = (byte >> j) & 1;
+                let bit = Choice::from((byte >> j) & 1);
                 swap ^= bit;
-                let choice = swap.into();
-                Z25519::conditional_swap(&mut x2, &mut x3, choice);
-                Z25519::conditional_swap(&mut z2, &mut z3, choice);
+                Z25519::conditional_swap(&mut x2, &mut x3, swap);
+                Z25519::conditional_swap(&mut z2, &mut z3, swap);
                 swap = bit;
 
                 let mut a = x2 + z2;
@@ -42,9 +41,8 @@ impl Scalar {
                 z2 *= aa;
             }
         }
-        let choice = swap.into();
-        Z25519::conditional_swap(&mut x2, &mut x3, choice);
-        Z25519::conditional_swap(&mut z2, &mut z3, choice);
+        Z25519::conditional_swap(&mut x2, &mut x3, swap);
+        Z25519::conditional_swap(&mut z2, &mut z3, swap);
         x2 * z2.inverse()
     }
 }
