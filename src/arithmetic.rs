@@ -254,35 +254,6 @@ impl Z25519 {
         self.reduce_after_scaling(carry);
     }
 
-    /// squared returns self * self, but more efficently
-    pub fn squared(mut self) -> Self {
-        self.square();
-        self
-    }
-
-    /// exp calculates self ^ power (mod P).
-    ///
-    /// This is done efficiently through binary exponentiation, without leaking any values.
-    pub fn exp(self, power: Z25519) -> Z25519 {
-        // We can calculate self ^ 2ᵇ just by squaring ourselves b times.
-        // Using the fact that self ^ (a + b) = self^a * self^b, we can multiply in all of
-        // the powers of two, which are calculated through squaring.
-        // We can do this incrementally, by going over each bit b of power, and multiplying
-        // in the corresponding self ^ 2ᵇ, if that bit is set, and then squaring
-        // self ^ 2ᵇ for the next iteration
-        let mut out = Z25519::from(1);
-        let mut current_power = self;
-        for i in 0..4 {
-            // We can avoid a single iteration, since the last bit is never set
-            for j in 0..(64 - (i >> 2)) {
-                let multiply = ((power.limbs[i] >> j) & 1).ct_eq(&1);
-                out *= Z25519::conditional_select(&Z25519::from(1), &current_power, multiply);
-                current_power.square()
-            }
-        }
-        out
-    }
-
     // inverse calculates self^-1 mod P, a number which multiplied by self returns 1
     //
     // This will work for every valid number, except 0.
@@ -674,15 +645,6 @@ mod test {
             let mut squared = a;
             squared.square();
             assert_eq!(squared, a * a);
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn test_exp_additive(a in arb_z25519(), b in any::<u64>(), c in any::<u64>()) {
-            let b = Z25519::from(b);
-            let c = Z25519::from(c);
-            assert_eq!(a.exp(b + c), a.exp(b) * a.exp(c));
         }
     }
 
