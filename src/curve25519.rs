@@ -24,8 +24,9 @@ impl Scalar {
                 swap = bit;
 
                 let mut a = x2 + z2;
-                let mut aa = a.squared();
                 let mut b = x2 - z2;
+                z2 = a;
+                z2.square();
                 x2 = b;
                 x2.square();
                 a *= x3 - z3;
@@ -35,8 +36,7 @@ impl Scalar {
                 z3 = a - b;
                 z3.square();
                 z3 *= base_x;
-                z2 = aa;
-                aa -= x2;
+                let aa = z2 - x2;
                 x2 *= z2;
                 z2 += aa * 121665;
                 z2 *= aa;
