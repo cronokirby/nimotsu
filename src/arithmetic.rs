@@ -1,5 +1,8 @@
-use std::{array::TryFromSliceError, convert::{TryFrom, TryInto}};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::{
+    array::TryFromSliceError,
+    convert::{TryFrom, TryInto},
+};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
@@ -309,7 +312,7 @@ impl Z25519 {
 
 impl From<[u8; 32]> for Z25519 {
     fn from(bytes: [u8; 32]) -> Self {
-        let mut out = Z25519 { limbs: [0; 4]};
+        let mut out = Z25519 { limbs: [0; 4] };
         for (i, chunk) in bytes.chunks_exact(8).enumerate() {
             out.limbs[i] = u64::from_le_bytes(chunk.try_into().unwrap())
         }
@@ -329,6 +332,19 @@ impl TryFrom<&[u8]> for Z25519 {
     }
 }
 
+impl Into<[u8; 32]> for Z25519 {
+    fn into(self) -> [u8; 32] {
+        let mut out = [0; 32];
+        let mut i = 0;
+        for limb in &self.limbs {
+            for &b in &limb.to_le_bytes() {
+                out[i] = b;
+                i += 1;
+            }
+        }
+        out
+    }
+}
 
 impl From<u64> for Z25519 {
     fn from(x: u64) -> Self {
