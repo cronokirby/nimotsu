@@ -1,8 +1,5 @@
+use std::convert::TryInto;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::{
-    array::TryFromSliceError,
-    convert::{TryFrom, TryInto},
-};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(target_arch = "x86_64")]
