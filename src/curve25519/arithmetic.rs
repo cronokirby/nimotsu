@@ -282,13 +282,15 @@ impl Z25519 {
 }
 
 impl From<[u8; 32]> for Z25519 {
-    fn from(bytes: [u8; 32]) -> Self {
+    /// Convert 32 bytes into a Z25519.
+    ///
+    /// The MSB of these bytes is ignored, as per convention for x25519
+    fn from(mut bytes: [u8; 32]) -> Self {
         let mut out = Z25519 { limbs: [0; 4] };
+        bytes[31] &= 0x7F;
         for (i, chunk) in bytes.chunks_exact(8).enumerate() {
             out.limbs[i] = u64::from_le_bytes(chunk.try_into().unwrap())
         }
-        // TODO: Perform reduction more efficiently
-        out.reduce_after_addition(0);
         out.reduce_after_addition(0);
         out
     }
@@ -744,9 +746,8 @@ mod test {
         let mut one = [0; 32];
         one[0] = 1;
         assert_eq!(Z25519::from(one), Z25519::from(1));
-        let mut two256 = [0xFF; 32];
-        assert_eq!(Z25519::from(two256), Z25519::from(37));
-        two256[31] = 0x7F;
-        assert_eq!(Z25519::from(two256), Z25519::from(18));
+        let mut two255minus_one = [0xFF; 32];
+        two255minus_one[31] = 0x7F;
+        assert_eq!(Z25519::from(two255minus_one), Z25519::from(18));
     }
 }

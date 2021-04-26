@@ -104,9 +104,7 @@ pub struct SharedSecret {
 
 pub fn exchange(my_priv: &PrivKey, their_pub: &PubKey) -> SharedSecret {
     let scalar = Scalar::from(my_priv.bytes);
-    let mut point_bytes = their_pub.bytes;
-    point_bytes[31] &= 0x7F;
-    let point = Z25519::from(point_bytes);
+    let point = Z25519::from(their_pub.bytes);
     let shared_bytes = scalar.act(point).into();
     SharedSecret {
         bytes: shared_bytes,
