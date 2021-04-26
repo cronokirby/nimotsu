@@ -5,12 +5,17 @@ use subtle::{Choice, ConditionallySelectable};
 
 use arithmetic::Z25519;
 
+/// Represents an integer used to scale points on our curve
+///
+/// We directly store the bytes, in little-endian order, since we really only
+/// care about the bits contained inside.
 #[derive(Debug)]
 struct Scalar {
     bytes: [u8; 32],
 }
 
 impl Scalar {
+    /// Given x(P), calculate x(self * P)
     fn act(&self, base_x: Z25519) -> Z25519 {
         let mut x2 = Z25519::from(1);
         let mut z2 = Z25519::from(0);
@@ -53,6 +58,8 @@ impl Scalar {
 
 impl From<[u8; 32]> for Scalar {
     fn from(bytes: [u8; 32]) -> Self {
+        // The rough goal of scalar decompression is multiplying by the cofactor,
+        // and ensuring that our scalar has a high enough order
         let mut out = Scalar { bytes };
         out.bytes[0] &= 248;
         out.bytes[31] &= 127;
@@ -61,30 +68,23 @@ impl From<[u8; 32]> for Scalar {
     }
 }
 
-impl From<&[u8]> for Scalar {
-    fn from(bytes: &[u8]) -> Self {
-        if bytes.len() < 32 {
-            panic!(
-                "Expected at least 32 bytes to make Scalar, found: {}",
-                bytes.len()
-            );
-        }
-        let mut owned = [0u8; 32];
-        owned.copy_from_slice(&bytes[..32]);
-        Scalar::from(owned)
-    }
-}
-
+/// Represents the public part of a key-pair.
+///
+/// This is ok to share.
 #[derive(Debug)]
 pub struct PubKey {
     bytes: [u8; 32],
 }
 
+/// Represents the private part of a key-pair.
+///
+/// This is not ok to share, and should be kept secret.
 #[derive(Debug)]
 pub struct PrivKey {
     bytes: [u8; 32],
 }
 
+/// Generate a new public private key-pair, given a random generator.
 pub fn gen_keypair<R: RngCore + CryptoRng>(rng: &mut R) -> (PubKey, PrivKey) {
     let mut scalar_bytes = [0u8; 32];
     rng.fill_bytes(&mut scalar_bytes);
@@ -97,11 +97,16 @@ pub fn gen_keypair<R: RngCore + CryptoRng>(rng: &mut R) -> (PubKey, PrivKey) {
     (pub_key, priv_key)
 }
 
+/// Represents a secret shared between two key-holders.
 #[derive(Debug)]
 pub struct SharedSecret {
     bytes: [u8; 32],
 }
 
+/// Using your private key, and their public key, obtain a shared secret.
+///
+/// If the other party uses their private key, and your public key, they obtain
+/// the same shared secret.
 pub fn exchange(my_priv: &PrivKey, their_pub: &PubKey) -> SharedSecret {
     let scalar = Scalar::from(my_priv.bytes);
     let point = Z25519::from(their_pub.bytes);

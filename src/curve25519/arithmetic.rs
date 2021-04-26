@@ -296,15 +296,6 @@ impl From<[u8; 32]> for Z25519 {
     }
 }
 
-impl TryFrom<&[u8]> for Z25519 {
-    type Error = TryFromSliceError;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let out: [u8; 32] = bytes.try_into()?;
-        Ok(Z25519::from(out))
-    }
-}
-
 impl Into<[u8; 32]> for Z25519 {
     fn into(self) -> [u8; 32] {
         let mut out = [0; 32];
