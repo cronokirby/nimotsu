@@ -1,34 +1,51 @@
-extern crate rand;
+use std::path::PathBuf;
+
 use curve25519::{exchange, gen_keypair};
 use rand::rngs::OsRng;
+use structopt::StructOpt;
 
 mod blake3;
 mod chacha20;
 mod curve25519;
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "nimotsu")]
+enum Args {
+    /// Generate a new keypair
+    ///
+    /// The public key will be printed out, the private key will be saved to a file
+    Generate {
+        /// The file to write the private key into
+        #[structopt(short = "o", long = "out", parse(from_os_str))]
+        out_file: PathBuf,
+    },
+    /// Encrypt a file for a given recipient
+    Encrypt {
+        /// The recipient to encrypt to
+        #[structopt(short = "r", long = "recipient")]
+        recipient: String,
+        /// The file to write the encrypted data to
+        #[structopt(short = "o", long = "out", parse(from_os_str))]
+        out_file: PathBuf,
+        /// The file contained the data to encrypt
+        #[structopt(name = "INPUT_FILE", parse(from_os_str))]
+        in_file: PathBuf,
+    },
+    /// Decrypt a file encrypted for you
+    Decrypt {
+        /// A path to your private key file
+        #[structopt(short = "k", long = "key", parse(from_os_str))]
+        key_file: PathBuf,
+        /// The file contained the data to decrypt
+        #[structopt(name = "INPUT_FILE", parse(from_os_str))]
+        in_file: PathBuf,
+        /// The file to write the decrypted to, or directly to the console
+        #[structopt(short = "o", long = "out", parse(from_os_str))]
+        out_file: Option<PathBuf>,
+    },
+}
+
 fn main() {
-    let (pub1, priv1) = gen_keypair(&mut OsRng);
-    println!("{:X?}\n{:X?}", pub1, priv1);
-    let (pub2, priv2) = gen_keypair(&mut OsRng);
-    println!("{:X?}\n{:X?}", pub2, priv2);
-    let ex12 = exchange(&priv1, &pub2);
-    println!("exchange(1, 2) {:X?}", ex12);
-    let ex21 = exchange(&priv2, &pub1);
-    println!("exchange(2, 1) {:X?}", ex21);
-    println!(
-        "derived ctx1 {:X?}",
-        blake3::derive_key("ctx1", &ex12.bytes)
-    );
-    println!(
-        "derived ctx2 {:X?}",
-        blake3::derive_key("ctx2", &ex12.bytes)
-    );
-    println!(
-        "test {:X?}",
-        blake3::derive_key("BLAKE3 2019-12-27 16:29:52 test vectors context", &[])
-    );
-    println!(
-        "test {:X?}",
-        blake3::derive_key("BLAKE3 2019-12-27 16:29:52 test vectors context", &[0, 1])
-    );
+    let args = Args::from_args();
+    println!("{:?}", args);
 }
