@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use core::num::dec2flt;
+use std::path::{Path, PathBuf};
 
 use curve25519::{exchange, gen_keypair};
 use rand::rngs::OsRng;
@@ -45,7 +46,31 @@ enum Args {
     },
 }
 
+fn generate(out_file: &Path) {
+    unimplemented!()
+}
+
+fn encrypt(recipient: &str, out_file: &Path, in_file: &Path) {
+    unimplemented!()
+}
+
+fn decrypt(key_file: &Path, in_file: &Path, out_file: Option<&Path>) {
+    unimplemented!()
+}
+
 fn main() {
     let args = Args::from_args();
-    println!("{:?}", args);
+    match args {
+        Args::Generate { out_file } => generate(&out_file),
+        Args::Encrypt {
+            recipient,
+            out_file,
+            in_file,
+        } => encrypt(&recipient, &out_file, &in_file),
+        Args::Decrypt {
+            key_file,
+            in_file,
+            out_file,
+        } => decrypt(&key_file, &in_file, out_file.map(|x| &x as &Path)),
+    };
 }
