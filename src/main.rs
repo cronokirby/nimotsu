@@ -14,6 +14,6 @@ fn main() {
     println!("exchange(1, 2) {:X?}", ex12);
     let ex21 = exchange(&priv2, &pub1);
     println!("exchange(2, 1) {:X?}", ex21);
-    println!("derived(1, 2) {:X?}", blake3::derive_key(&ex12.bytes));
-    println!("derived(2, 1) {:X?}", blake3::derive_key(&ex21.bytes));
+    println!("derived ctx1 {:X?}", blake3::derive_key("ctx1", &ex12.bytes));
+    println!("derived ctx2 {:X?}", blake3::derive_key("ctx2", &ex12.bytes));
 }

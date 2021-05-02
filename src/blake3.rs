@@ -1,5 +1,12 @@
 use std::{convert::TryInto, ops::Index};
 
+// Flags for domain separation
+const FLAG_CHUNK_START: u32 = 1;
+const FLAG_CHUNK_END: u32 = 1 << 1;
+const FLAG_ROOT: u32 = 1 << 3;
+const FLAG_DERIVE_KEY_CONTEXT: u32 = 1 << 5;
+const FLAG_DERIVE_KEY_MATERIAL: u32 = 1 << 6;
+
 // Initialization values used for the algorithm
 const IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
@@ -138,13 +145,24 @@ fn fill_fragment(fragment: &mut [u32; 16], data: &[u8]) {
     }
 }
 
-fn hash(data: &[u8]) -> [u32; 8] {
+fn hash(base_domain: u32, mut chaining: [u32; 8], data: &[u8]) -> [u32; 8] {
+    debug_assert!(data.len() <= 1024);
+
     let mut fragment = [0; 16];
     let mut compression_state = CompressionState::empty();
-    let mut chaining = [0u32; 8];
-    for chunk in data.chunks(64) {
+
+    let last_chunk_index = ((data.len() + 63) >> 6) - 1;
+    for (index, chunk) in data.chunks(64).enumerate() {
+        let mut chunk_domain = base_domain;
+        if index == 0 {
+            chunk_domain |= FLAG_CHUNK_START;
+        }
+        if index == last_chunk_index {
+            chunk_domain |= FLAG_CHUNK_END;
+            chunk_domain |= FLAG_ROOT;
+        }
         fill_fragment(&mut fragment, chunk);
-        compression_state.init(&chaining, 0, chunk.len() as u32, 0);
+        compression_state.init(&chaining, 0, chunk.len() as u32, chunk_domain);
         chaining = compression_state.compress(&fragment);
     }
     chaining
@@ -162,6 +180,7 @@ fn flatten_output(thick: [u32; 8]) -> [u8; 32] {
     out
 }
 
-pub fn derive_key(key_material: &[u8]) -> [u8; 32] {
-    flatten_output(hash(key_material))
+pub fn derive_key(context: &'static str, key_material: &[u8]) -> [u8; 32] {
+    let context_hash = hash(FLAG_DERIVE_KEY_CONTEXT, IV.clone(), context.as_bytes());
+    flatten_output(hash(FLAG_DERIVE_KEY_MATERIAL, context_hash, key_material))
 }
