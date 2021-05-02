@@ -1,5 +1,10 @@
 use std::ops::Index;
 
+// Initialization values used for the algorithm
+const IV: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
 // This contains successive permutations of indices from 0 to 15.
 // This is used to permute the part of the message we use for compression.
 const PERMUTATIONS: [[usize; 16]; 7] = [
@@ -12,9 +17,9 @@ const PERMUTATIONS: [[usize; 16]; 7] = [
     [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
 ];
 
-// This is a convenient wrapper over a piece of our message, providing implicit
-// permutations when indexing. Hopefully, the compiler can realize what we're doing,
-// and inline the permutations for us.
+/// This is a convenient wrapper over a piece of our message, providing implicit
+/// permutations when indexing. Hopefully, the compiler can realize what we're doing,
+/// and inline the permutations for us.
 #[derive(Debug)]
 struct PermutedFragment<'a> {
     permutation: usize,
@@ -47,6 +52,33 @@ impl<'a> Index<usize> for PermutedFragment<'a> {
 struct CompressionState([u32; 16]);
 
 impl CompressionState {
+    /// Initialize this state as empty
+    fn empty() -> Self {
+        CompressionState([0; 16])
+    }
+
+    /// Initialize this compression state with new input values.
+    ///
+    /// The chaining value lets us link the hashing process of different blocks together.
+    /// The counter lets us separate out the hash values of different chunks.
+    /// The byte_count makes sure that shorter blocks give different hashses
+    /// The domain allows us to separate out the hash values in different parts of the algorithm.
+    fn init(&mut self, chaining: &[u32; 8], counter: u64, byte_count: u32, domain: u32) {
+        // The first two rows are the chaining value
+        for i in 0..8 {
+            self.0[i] = chaining[i];
+        }
+        // The next row comes from the static IV for this algorithm
+        for i in 0..4 {
+            self.0[i + 8] = IV[i];
+        }
+        // Then we have the counters, and the domain flag
+        self.0[12] = counter as u32;
+        self.0[13] = (counter >> 32) as u32;
+        self.0[14] = byte_count;
+        self.0[15] = domain;
+    }
+
     /// The quarter round is the basic building block of our compression function.
     ///
     /// We operate over 4 pieces of our state, using two words from the input to guide our mixing.
@@ -75,10 +107,10 @@ impl CompressionState {
         self.quarter_round(3, 4, 9, 14, fragment[14], fragment[15]);
     }
 
-    // Compress the state, guided by part of the message, returning 256 bits of output
-    //
-    // In theory 512 bits can be produced by the compression function, but we don't need
-    // all of that output for our purposes.
+    /// Compress the state, guided by part of the message, returning 256 bits of output
+    ///
+    /// In theory 512 bits can be produced by the compression function, but we don't need
+    /// all of that output for our purposes.
     fn compress(&mut self, message: &[u32; 16]) -> [u32; 8] {
         for i in 0..PERMUTATIONS.len() {
             self.round(PermutedFragment::new(i, message));
