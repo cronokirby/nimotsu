@@ -78,11 +78,11 @@ impl MixingState {
         self.0[a] = self.0[a].wrapping_add(self.0[b]);
         self.0[d] = (self.0[d] ^ self.0[a]).rotate_left(16);
         self.0[c] = self.0[c].wrapping_add(self.0[d]);
-        self.0[b] = (self.0[b] & self.0[c]).rotate_left(12);
+        self.0[b] = (self.0[b] ^ self.0[c]).rotate_left(12);
         self.0[a] = self.0[a].wrapping_add(self.0[b]);
         self.0[d] = (self.0[d] ^ self.0[a]).rotate_left(8);
         self.0[c] = self.0[c].wrapping_add(self.0[d]);
-        self.0[b] = (self.0[b] & self.0[c]).rotate_left(7);
+        self.0[b] = (self.0[b] ^ self.0[c]).rotate_left(7);
     }
 
     /// This performs a single round, mixing up the entire state matrix
@@ -94,7 +94,7 @@ impl MixingState {
         self.quarter_round(1, 5, 9, 13);
         self.quarter_round(2, 6, 10, 14);
         self.quarter_round(3, 7, 11, 15);
-        self.quarter_round(0, 5, 10, 13);
+        self.quarter_round(0, 5, 10, 15);
         self.quarter_round(1, 6, 11, 12);
         self.quarter_round(2, 7, 8, 13);
         self.quarter_round(3, 4, 9, 14);
@@ -114,12 +114,14 @@ impl MixingState {
     /// Use the mixed state to encrypt a chunk of at most 64 bytes
     fn encrypt(&self, chunk: &mut [u8]) {
         // First, handle the words that line up exactly with this chunk
-        for i in (0..chunk.len()).step_by(4) {
+        let mut i = 0;
+        while i + 4 <= chunk.len() {
             let word = self.0[i >> 2];
             chunk[i] ^= word as u8;
             chunk[i + 1] ^= (word >> 8) as u8;
             chunk[i + 2] ^= (word >> 16) as u8;
             chunk[i + 3] ^= (word >> 24) as u8;
+            i += 4;
         }
         // The start of the remaining bytes that aren't aligned to 4 bytes
         let remaining_start = chunk.len() & !0b11;
@@ -142,12 +144,50 @@ impl MixingState {
 /// For our purposes in this crate, it's safe to generate the nonce randomly, because
 /// we use ephemeral keys.
 pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
-    let mut initial_state = InitialState::new(nonce, key, 0);
+    let mut initial_state = InitialState::new(nonce, key, 1);
     let mut mixing_state = MixingState::empty();
     for chunk in data.chunks_mut(64) {
+        println!("{:X?}", initial_state);
         mixing_state.init(&initial_state);
         mixing_state.mix(&initial_state);
+        println!("{:X?}", mixing_state);
         mixing_state.encrypt(chunk);
         initial_state.increment();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_sunscreen() {
+        let key = Key {
+            bytes: [
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0xa, 0xb, 0xc, 0xd,
+                0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+                0x1c, 0x1d, 0x1e, 0x1f,
+            ],
+        };
+        let nonce = Nonce {
+            bytes: [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00,
+            ],
+        };
+        let text = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+        let expected: [u8; 114] = [
+            0x6e, 0x2e, 0x35, 0x9a, 0x25, 0x68, 0xf9, 0x80, 0x41, 0xba, 0x07, 0x28, 0xdd, 0x0d,
+            0x69, 0x81, 0xe9, 0x7e, 0x7a, 0xec, 0x1d, 0x43, 0x60, 0xc2, 0x0a, 0x27, 0xaf, 0xcc,
+            0xfd, 0x9f, 0xae, 0x0b, 0xf9, 0x1b, 0x65, 0xc5, 0x52, 0x47, 0x33, 0xab, 0x8f, 0x59,
+            0x3d, 0xab, 0xcd, 0x62, 0xb3, 0x57, 0x16, 0x39, 0xd6, 0x24, 0xe6, 0x51, 0x52, 0xab,
+            0x8f, 0x53, 0x0c, 0x35, 0x9f, 0x08, 0x61, 0xd8, 0x07, 0xca, 0x0d, 0xbf, 0x50, 0x0d,
+            0x6a, 0x61, 0x56, 0xa3, 0x8e, 0x08, 0x8a, 0x22, 0xb6, 0x5e, 0x52, 0xbc, 0x51, 0x4d,
+            0x16, 0xcc, 0xf8, 0x06, 0x81, 0x8c, 0xe9, 0x1a, 0xb7, 0x79, 0x37, 0x36, 0x5a, 0xf9,
+            0x0b, 0xbf, 0x74, 0xa3, 0x5b, 0xe6, 0xb4, 0x0b, 0x8e, 0xed, 0xf2, 0x78, 0x5e, 0x42,
+            0x87, 0x4d,
+        ];
+        let mut bytes = text.as_bytes().to_owned();
+        encrypt(&nonce, &key, &mut bytes);
+        assert_eq!(&expected[..], &bytes);
     }
 }
