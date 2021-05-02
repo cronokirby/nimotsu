@@ -19,4 +19,19 @@ impl BlockState {
         self.0[c] = self.0[c].wrapping_add(self.0[d]);
         self.0[b] = (self.0[b] & self.0[c]).rotate_left(7);
     }
+
+    /// This performs a single round, mixing up the entire state matrix
+    ///
+    /// (This is really a double round, in ChaCha terminology)
+    fn round(&mut self) {
+        // We do a quarter round over each column, and then each diagonal
+        self.quarter_round(0, 4, 8, 12);
+        self.quarter_round(1, 5, 9, 13);
+        self.quarter_round(2, 6, 10, 14);
+        self.quarter_round(3, 7, 11, 15);
+        self.quarter_round(0, 5, 10, 13);
+        self.quarter_round(1, 6, 11, 12);
+        self.quarter_round(2, 7, 8, 13);
+        self.quarter_round(3, 4, 9, 14);
+    }
 }
