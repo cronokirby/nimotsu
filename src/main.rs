@@ -10,6 +10,10 @@ fn main() {
     println!("{:X?}\n{:X?}", pub1, priv1);
     let (pub2, priv2) = gen_keypair(&mut OsRng);
     println!("{:X?}\n{:X?}", pub2, priv2);
-    println!("exchange(1, 2) {:X?}", exchange(&priv1, &pub2));
-    println!("exchange(2, 1) {:X?}", exchange(&priv2, &pub1));
+    let ex12 = exchange(&priv1, &pub2);
+    println!("exchange(1, 2) {:X?}", ex12);
+    let ex21 = exchange(&priv2, &pub1);
+    println!("exchange(2, 1) {:X?}", ex21);
+    println!("derived(1, 2) {:X?}", blake3::derive_key(&ex12.bytes));
+    println!("derived(2, 1) {:X?}", blake3::derive_key(&ex21.bytes));
 }

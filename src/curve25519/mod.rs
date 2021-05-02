@@ -100,7 +100,7 @@ pub fn gen_keypair<R: RngCore + CryptoRng>(rng: &mut R) -> (PubKey, PrivKey) {
 /// Represents a secret shared between two key-holders.
 #[derive(Debug)]
 pub struct SharedSecret {
-    bytes: [u8; 32],
+    pub bytes: [u8; 32],
 }
 
 /// Using your private key, and their public key, obtain a shared secret.

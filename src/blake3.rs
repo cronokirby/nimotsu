@@ -1,4 +1,4 @@
-use std::ops::Index;
+use std::{convert::TryInto, ops::Index};
 
 // Initialization values used for the algorithm
 const IV: [u32; 8] = [
@@ -83,13 +83,13 @@ impl CompressionState {
     ///
     /// We operate over 4 pieces of our state, using two words from the input to guide our mixing.
     fn quarter_round(&mut self, a: usize, b: usize, c: usize, d: usize, m0: u32, m1: u32) {
-        self.0[a] = self.0[a] + self.0[b] + m0;
+        self.0[a] = self.0[a].wrapping_add(self.0[b]).wrapping_add(m0);
         self.0[d] = (self.0[d] ^ self.0[a]).rotate_right(16);
-        self.0[c] = self.0[c] + self.0[d];
+        self.0[c] = self.0[c].wrapping_add(self.0[d]);
         self.0[b] = (self.0[b] ^ self.0[c]).rotate_right(12);
-        self.0[a] = self.0[a] + self.0[b] + m1;
+        self.0[a] = self.0[a].wrapping_add(self.0[b]).wrapping_add(m1);
         self.0[d] = (self.0[d] ^ self.0[a]).rotate_right(8);
-        self.0[c] = self.0[c] + self.0[d];
+        self.0[c] = self.0[c].wrapping_add(self.0[d]);
         self.0[b] = (self.0[b] ^ self.0[c]).rotate_right(7);
     }
 
@@ -111,9 +111,9 @@ impl CompressionState {
     ///
     /// In theory 512 bits can be produced by the compression function, but we don't need
     /// all of that output for our purposes.
-    fn compress(&mut self, message: &[u32; 16]) -> [u32; 8] {
+    fn compress(&mut self, fragment: &[u32; 16]) -> [u32; 8] {
         for i in 0..PERMUTATIONS.len() {
-            self.round(PermutedFragment::new(i, message));
+            self.round(PermutedFragment::new(i, fragment));
         }
         let mut out = [0; 8];
         for i in 0..8 {
@@ -121,4 +121,47 @@ impl CompressionState {
         }
         out
     }
+}
+
+fn fill_fragment(fragment: &mut [u32; 16], data: &[u8]) {
+    let aligned_len = data.len() & !0b11;
+    let mut i = 0;
+    for quad in data[..aligned_len].chunks_exact(4) {
+        fragment[i] = u32::from_le_bytes(quad.try_into().unwrap());
+        i += 1;
+    }
+    for j in i..16 {
+        fragment[j] = 0;
+    }
+    for (index, &byte) in data[aligned_len..].iter().enumerate() {
+        fragment[i] |= (byte as u32) << (index * 8);
+    }
+}
+
+fn hash(data: &[u8]) -> [u32; 8] {
+    let mut fragment = [0; 16];
+    let mut compression_state = CompressionState::empty();
+    let mut chaining = [0u32; 8];
+    for chunk in data.chunks(64) {
+        fill_fragment(&mut fragment, chunk);
+        compression_state.init(&chaining, 0, chunk.len() as u32, 0);
+        chaining = compression_state.compress(&fragment);
+    }
+    chaining
+}
+
+fn flatten_output(thick: [u32; 8]) -> [u8; 32] {
+    let mut out = [0; 32];
+    let mut i = 0;
+    for word in &thick {
+        for &b in &word.to_le_bytes() {
+            out[i] = b;
+            i += 1;
+        }
+    }
+    out
+}
+
+pub fn derive_key(key_material: &[u8]) -> [u8; 32] {
+    flatten_output(hash(key_material))
 }
