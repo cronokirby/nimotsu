@@ -1,5 +1,9 @@
-use core::num::dec2flt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use std::{
+    fs::File,
+    io::{self, Write},
+};
 
 use curve25519::{exchange, gen_keypair};
 use rand::rngs::OsRng;
@@ -46,19 +50,35 @@ enum Args {
     },
 }
 
-fn generate(out_file: &Path) {
+fn bytes_to_hex<W: io::Write>(data: &[u8], writer: &mut W) -> io::Result<()> {
+    for byte in data {
+        write!(writer, "{:02X}", byte)?;
+    }
+    Ok(())
+}
+
+fn generate(out_file: &Path) -> io::Result<()> {
+    let (pub_key, priv_key) = curve25519::gen_keypair(&mut OsRng);
+    print!("Public Key:\n荷物の公開鍵");
+    bytes_to_hex(&pub_key.bytes, &mut io::stdout())?;
+    println!();
+    let mut file = File::create(out_file)?;
+    write!(file, "# Public Key: 荷物の公開鍵")?;
+    bytes_to_hex(&pub_key.bytes, &mut file)?;
+    write!(file, "\n荷物の秘密鍵")?;
+    bytes_to_hex(&priv_key.bytes, &mut file)?;
+    Ok(())
+}
+
+fn encrypt(recipient: &str, out_file: &Path, in_file: &Path) -> io::Result<()> {
     unimplemented!()
 }
 
-fn encrypt(recipient: &str, out_file: &Path, in_file: &Path) {
+fn decrypt(key_file: &Path, in_file: &Path, out_file: Option<&Path>) -> io::Result<()> {
     unimplemented!()
 }
 
-fn decrypt(key_file: &Path, in_file: &Path, out_file: Option<&Path>) {
-    unimplemented!()
-}
-
-fn main() {
+fn main() -> io::Result<()> {
     let args = Args::from_args();
     match args {
         Args::Generate { out_file } => generate(&out_file),
@@ -71,6 +91,6 @@ fn main() {
             key_file,
             in_file,
             out_file,
-        } => decrypt(&key_file, &in_file, out_file.map(|x| &x as &Path)),
-    };
+        } => decrypt(&key_file, &in_file, out_file.as_ref().map(|x| &*x as &Path)),
+    }
 }

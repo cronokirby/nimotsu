@@ -73,7 +73,7 @@ impl From<[u8; 32]> for Scalar {
 /// This is ok to share.
 #[derive(Debug)]
 pub struct PubKey {
-    bytes: [u8; 32],
+    pub bytes: [u8; 32],
 }
 
 /// Represents the private part of a key-pair.
@@ -81,7 +81,7 @@ pub struct PubKey {
 /// This is not ok to share, and should be kept secret.
 #[derive(Debug)]
 pub struct PrivKey {
-    bytes: [u8; 32],
+    pub bytes: [u8; 32],
 }
 
 /// Generate a new public private key-pair, given a random generator.
