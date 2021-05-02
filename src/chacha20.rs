@@ -1,3 +1,21 @@
+use std::convert::TryInto;
+
+/// A number that should only be used for a single encryption.
+///
+/// For the purposes of this crate, randomly generating it is fine,
+/// since we encrypt things with ephemeral keys. Otherwise, you'd
+/// probably want to use XChaCha20 instead, to allow a larger nonce
+#[derive(Debug)]
+pub struct Nonce {
+    pub bytes: [u8; 12],
+}
+
+/// A key to use for symmetric encryption.
+#[derive(Debug)]
+pub struct Key {
+    pub bytes: [u8; 32],
+}
+
 /// Converting from bytes to words is somewhat tedious, but incrementing the counter word
 /// is much easier. By using InitialState, we can keep around a block used to initialize
 /// each step of our mixing state. ChaCha20 also requires us to add the mixed state
@@ -6,6 +24,23 @@
 struct InitialState([u32; 16]);
 
 impl InitialState {
+    /// Initialize this state with a nonce, a key, and a starting count
+    fn new(nonce: &Nonce, key: &Key, starting_count: u32) -> Self {
+        let mut out = [0; 16];
+        out[0] = 0x61707865;
+        out[1] = 0x3320646e;
+        out[2] = 0x79622d32;
+        out[3] = 0x6b206574;
+        for (i, chunk) in key.bytes.chunks_exact(4).enumerate() {
+            out[4 + i] = u32::from_le_bytes(chunk.try_into().unwrap())
+        }
+        out[12] = starting_count;
+        for (i, chunk) in nonce.bytes.chunks_exact(4).enumerate() {
+            out[13 + i] = u32::from_le_bytes(chunk.try_into().unwrap())
+        }
+        InitialState(out)
+    }
+
     /// Increment the counter contained in this state.
     ///
     /// This should be done as we encrypt each block in our data.
