@@ -48,10 +48,8 @@ impl BlockState {
         }
     }
 
-    /// Use the mixed state to encrypt a chunk of 64 bytes
-    ///
-    /// This will work if the chunk is aligned to 4 bytes, actually.
-    fn encrypt_exact(&self, chunk: &mut [u8]) {
+    /// Use the mixed state to encrypt a chunk of at most 64 bytes
+    fn encrypt(&self, chunk: &mut [u8]) {
         // First, handle the words that line up exactly with this chunk
         for i in (0..chunk.len()).step_by(4) {
             let word = self.0[i >> 2];
@@ -59,6 +57,18 @@ impl BlockState {
             chunk[i + 1] ^= (word >> 8) as u8;
             chunk[i + 2] ^= (word >> 16) as u8;
             chunk[i + 3] ^= (word >> 24) as u8;
+        }
+        // The start of the remaining bytes that aren't aligned to 4 bytes
+        let remaining_start = chunk.len() & !0b11;
+        // This avoids indexing past the end of our state, when we have a 64 byte chunk
+        if remaining_start >= chunk.len() {
+            return;
+        }
+        // Now just fold in the last bit of state, as much as necessary
+        let mut last_word = self.0[remaining_start >> 2];
+        for byte in &mut chunk[remaining_start..] {
+            *byte ^= last_word as u8;
+            last_word >>= 8;
         }
     }
 }
