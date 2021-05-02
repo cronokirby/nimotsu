@@ -1,11 +1,36 @@
+/// Converting from bytes to words is somewhat tedious, but incrementing the counter word
+/// is much easier. By using InitialState, we can keep around a block used to initialize
+/// each step of our mixing state. ChaCha20 also requires us to add the mixed state
+/// with the initial state of that step, making the use of this struct even more natural.
+#[derive(Debug)]
+struct InitialState([u32; 16]);
+
+impl InitialState {
+    /// Increment the counter contained in this state.
+    ///
+    /// This should be done as we encrypt each block in our data.
+    fn increment(&mut self) {
+        let (next, overflow) = self.0[12].overflowing_add(1);
+        if overflow {
+            panic!("Encryption exceeded 256GB of data");
+        }
+        self.0[12] = next;
+    }
+}
+
 /// The state we maintain to generate a block of our keystream.
 ///
 /// The idea is to initialize this block with our entropy (key and nonce), as well as a counter,
 /// and then mix it up real well, so that we end up with seemingly random data.
-#[derive(Debug)]
-struct BlockState([u32; 16]);
+#[derive(Clone, Debug)]
+struct MixingState([u32; 16]);
 
-impl BlockState {
+impl MixingState {
+    /// Initialize the mixing state, given an initial state
+    fn init(&mut self, initial_state: &InitialState) {
+        self.0.clone_from_slice(&initial_state.0);
+    }
+
     /// The quarter round is the basic building block of our mixing operation.
     ///
     /// We operate over 4 pieces of our state, mixing them together.
@@ -36,15 +61,13 @@ impl BlockState {
     }
 
     /// Mix up all of the state in this block, ready for use in encryption
-    fn mix(&mut self) {
-        // We need to add our initial state back after doing the round mixing
-        let initial_state = self.0.clone();
+    fn mix(&mut self, initial_state: &InitialState) {
         // 10 double rounds, for ChaCha20
         for _ in 0..10 {
             self.round();
         }
         for i in 0..16 {
-            self.0[i] = self.0[i].wrapping_add(initial_state[i]);
+            self.0[i] = self.0[i].wrapping_add(initial_state.0[i]);
         }
     }
 
