@@ -61,6 +61,11 @@ impl InitialState {
 struct MixingState([u32; 16]);
 
 impl MixingState {
+    /// An empty mixing state
+    fn empty() -> Self {
+        MixingState([0; 16])
+    }
+
     /// Initialize the mixing state, given an initial state
     fn init(&mut self, initial_state: &InitialState) {
         self.0.clone_from_slice(&initial_state.0);
@@ -128,5 +133,21 @@ impl MixingState {
             *byte ^= last_word as u8;
             last_word >>= 8;
         }
+    }
+}
+
+/// encrypt a slice of data in place, using a unique nonce, and an encryption key.
+///
+/// The nonce should never be reused with the same key for different encryptions.
+/// For our purposes in this crate, it's safe to generate the nonce randomly, because
+/// we use ephemeral keys.
+pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
+    let mut initial_state = InitialState::new(nonce, key, 0);
+    let mut mixing_state = MixingState::empty();
+    for chunk in data.chunks_mut(64) {
+        mixing_state.init(&initial_state);
+        mixing_state.mix(&initial_state);
+        mixing_state.encrypt(chunk);
+        initial_state.increment();
     }
 }
