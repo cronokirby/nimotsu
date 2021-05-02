@@ -1,3 +1,4 @@
+use rand::{CryptoRng, RngCore};
 use std::convert::TryInto;
 
 /// A number that should only be used for a single encryption.
@@ -8,6 +9,15 @@ use std::convert::TryInto;
 #[derive(Debug)]
 pub struct Nonce {
     pub bytes: [u8; 12],
+}
+
+impl Nonce {
+    /// Generate a Nonce randomly
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+        let mut bytes = [0; 12];
+        rng.fill_bytes(&mut bytes);
+        Nonce { bytes }
+    }
 }
 
 /// A key to use for symmetric encryption.
