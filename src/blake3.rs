@@ -150,6 +150,12 @@ fn hash(base_domain: u32, mut chaining: [u32; 8], data: &[u8]) -> [u32; 8] {
 
     let mut fragment = [0; 16];
     let mut compression_state = CompressionState::empty();
+    // Easier to special case empty data
+    if data.len() == 0 {
+        let chunk_domain = base_domain | FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT;
+        compression_state.init(&chaining, 0, 0, chunk_domain);
+        return compression_state.compress(&fragment);
+    }
 
     let last_chunk_index = ((data.len() + 63) >> 6) - 1;
     for (index, chunk) in data.chunks(64).enumerate() {
