@@ -34,4 +34,31 @@ impl BlockState {
         self.quarter_round(2, 7, 8, 13);
         self.quarter_round(3, 4, 9, 14);
     }
+
+    /// Mix up all of the state in this block, ready for use in encryption
+    fn mix(&mut self) {
+        // We need to add our initial state back after doing the round mixing
+        let initial_state = self.0.clone();
+        // 10 double rounds, for ChaCha20
+        for _ in 0..10 {
+            self.round();
+        }
+        for i in 0..16 {
+            self.0[i] = self.0[i].wrapping_add(initial_state[i]);
+        }
+    }
+
+    /// Use the mixed state to encrypt a chunk of 64 bytes
+    ///
+    /// This will work if the chunk is aligned to 4 bytes, actually.
+    fn encrypt_exact(&self, chunk: &mut [u8]) {
+        // First, handle the words that line up exactly with this chunk
+        for i in (0..chunk.len()).step_by(4) {
+            let word = self.0[i >> 2];
+            chunk[i] ^= word as u8;
+            chunk[i + 1] ^= (word >> 8) as u8;
+            chunk[i + 2] ^= (word >> 16) as u8;
+            chunk[i + 3] ^= (word >> 24) as u8;
+        }
+    }
 }
