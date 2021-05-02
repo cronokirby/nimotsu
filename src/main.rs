@@ -2,6 +2,7 @@ extern crate rand;
 use curve25519::{exchange, gen_keypair};
 use rand::rngs::OsRng;
 
+mod blake3;
 mod curve25519;
 
 fn main() {
