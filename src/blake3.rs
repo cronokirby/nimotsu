@@ -130,9 +130,14 @@ impl CompressionState {
     }
 }
 
+// fill a fragment of words, using bytes in little endian order
+//
+// The remaining parts of the fragment will be filled with 0.
 fn fill_fragment(fragment: &mut [u32; 16], data: &[u8]) {
+    // Remove the remainder modulo 4
     let aligned_len = data.len() & !0b11;
     let mut i = 0;
+    // For all of the aligned bytes, we can easily convert the data to words
     for quad in data[..aligned_len].chunks_exact(4) {
         fragment[i] = u32::from_le_bytes(quad.try_into().unwrap());
         i += 1;
@@ -140,11 +145,16 @@ fn fill_fragment(fragment: &mut [u32; 16], data: &[u8]) {
     for j in i..16 {
         fragment[j] = 0;
     }
+    // The index right after we inserted in the aligned data might have a few bytes left
     for (index, &byte) in data[aligned_len..].iter().enumerate() {
         fragment[i] |= (byte as u32) << (index * 8);
     }
 }
 
+/// Calculate a hash of some data, given a base domain, and some chaining data
+///
+/// The domain allows us to use the hash function in different contexts.
+/// The chaining data is used for initialization in different modes.
 fn hash(base_domain: u32, mut chaining: [u32; 8], data: &[u8]) -> [u32; 8] {
     debug_assert!(data.len() <= 1024);
 
@@ -156,7 +166,7 @@ fn hash(base_domain: u32, mut chaining: [u32; 8], data: &[u8]) -> [u32; 8] {
         compression_state.init(&chaining, 0, 0, chunk_domain);
         return compression_state.compress(&fragment);
     }
-
+    // This is the number of 64 byte chunks, minus one
     let last_chunk_index = ((data.len() + 63) >> 6) - 1;
     for (index, chunk) in data.chunks(64).enumerate() {
         let mut chunk_domain = base_domain;
@@ -174,6 +184,7 @@ fn hash(base_domain: u32, mut chaining: [u32; 8], data: &[u8]) -> [u32; 8] {
     chaining
 }
 
+/// Take the output in words, and flatten it out into bytes in little endian order
 fn flatten_output(thick: [u32; 8]) -> [u8; 32] {
     let mut out = [0; 32];
     let mut i = 0;
@@ -186,6 +197,12 @@ fn flatten_output(thick: [u32; 8]) -> [u8; 32] {
     out
 }
 
+/// Derive a key given some context, and the material used to generate the key.
+///
+/// The context is used to ensure that different contexts receive different keys.
+///
+/// The context should be a static string, and different for each context and
+/// version of an application.
 pub fn derive_key(context: &'static str, key_material: &[u8]) -> [u8; 32] {
     let context_hash = hash(FLAG_DERIVE_KEY_CONTEXT, IV.clone(), context.as_bytes());
     flatten_output(hash(FLAG_DERIVE_KEY_MATERIAL, context_hash, key_material))
