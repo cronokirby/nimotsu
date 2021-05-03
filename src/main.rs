@@ -1,5 +1,6 @@
 use std::{
     convert::TryInto,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
 use std::{
@@ -10,7 +11,7 @@ use std::{io::Read, time::SystemTime};
 
 use blake3::derive_key;
 use chacha20::{encrypt, Key, Nonce};
-use curve25519::{exchange, gen_keypair, PubKey};
+use curve25519::{exchange, gen_keypair, PrivKey, PubKey};
 use rand::rngs::OsRng;
 use structopt::StructOpt;
 
@@ -29,6 +30,14 @@ fn encrypt_to_recipient(recipient: &PubKey, data: &mut [u8]) -> (PubKey, Nonce) 
     let nonce = Nonce::random(&mut OsRng);
     encrypt(&nonce, &derived_key, data);
     (ephemeral_pub, nonce)
+}
+
+fn decrypt_from_sender(my_priv: &PrivKey, sender: &PubKey, nonce: &Nonce, data: &mut [u8]) {
+    let shared_secret = exchange(my_priv, sender);
+    let derived_key = Key {
+        bytes: derive_key(DERIVE_KEY_CONTEXT, &shared_secret.bytes),
+    };
+    encrypt(&nonce, &derived_key, data);
 }
 
 #[derive(StructOpt, Debug)]
@@ -142,7 +151,6 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
         .ok_or(AppError::ParseError(
             "recipient does not have public key prefix '荷物の公開鍵'".into(),
         ))?;
-    dbg!(&hex_string);
     if hex_string.len() != 64 {
         return Err(AppError::ParseError(format!(
             "invalid recipient size: {}",
@@ -161,8 +169,7 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
     let (ephemeral_pub, nonce) = encrypt_to_recipient(&recipient_key, &mut input_buf);
     let mut out_file = File::create(out_path)?;
     // Header
-    write!(out_file, "nimotsu")?;
-    out_file.write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    out_file.write_all(b"nimotsu\x00\x01\x00")?;
     // Public key, and nonce
     out_file.write_all(&ephemeral_pub.bytes)?;
     out_file.write_all(&nonce.bytes)?;
@@ -170,8 +177,56 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
     Ok(())
 }
 
-fn decrypt(key_file: &Path, in_file: &Path, out_file: Option<&Path>) -> io::Result<()> {
-    unimplemented!()
+fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResult<()> {
+    let mut priv_key_bytes = Vec::with_capacity(64);
+    let mut maybe_priv_key = None;
+    let key_file = File::open(key_path)?;
+    let key_reader = BufReader::new(key_file);
+    for maybe_line in key_reader.lines() {
+        let line = maybe_line?;
+        if line.starts_with("#") {
+            continue;
+        }
+        let hex_string = line
+            .strip_prefix("荷物の秘密鍵")
+            .ok_or(AppError::ParseError(
+                "key file does not have private key prefix '荷物の秘密鍵'".into(),
+            ))?;
+        if hex_string.len() != 64 {
+            return Err(AppError::ParseError(format!(
+                "invalid private key size size: {}",
+                hex_string.len()
+            )));
+        }
+        bytes_from_hex(hex_string, &mut priv_key_bytes)?;
+        maybe_priv_key = Some(PrivKey {
+            // We checked the length earlier
+            bytes: priv_key_bytes.try_into().unwrap(),
+        });
+        break;
+    }
+    let priv_key = maybe_priv_key.ok_or(AppError::ParseError("No key in file".into()))?;
+
+    let mut in_file = File::open(in_path)?;
+    let mut header = [0u8; 10];
+    in_file.read_exact(&mut header)?;
+    if &header != b"nimotsu\x00\x01\x00" {
+        return Err(AppError::ParseError("Invalid header".into()));
+    }
+    let mut sender_pub = PubKey { bytes: [0; 32] };
+    in_file.read_exact(&mut sender_pub.bytes)?;
+    let mut nonce = Nonce { bytes: [0; 12] };
+    in_file.read_exact(&mut nonce.bytes)?;
+    let mut encrypted_data = Vec::new();
+    in_file.read_to_end(&mut encrypted_data)?;
+    decrypt_from_sender(&priv_key, &sender_pub, &nonce, &mut encrypted_data);
+
+    let mut out_writer: Box<dyn io::Write> = match out_path {
+        Some(path) => Box::new(File::create(path)?),
+        None => Box::new(io::stdout()),
+    };
+    out_writer.write_all(&encrypted_data)?;
+    Ok(())
 }
 
 fn main() -> AppResult<()> {
