@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::{
     convert::TryInto,
     io::{BufRead, BufReader},
@@ -7,7 +8,6 @@ use std::{
     fs::File,
     io::{self, Write},
 };
-use std::io::Read;
 
 use blake3::derive_key;
 use chacha20::{encrypt, Key, Nonce};
@@ -132,25 +132,30 @@ fn bytes_from_hex(data: &str, buf: &mut Vec<u8>) -> AppResult<()> {
     Ok(())
 }
 
+const FILE_HEADER: &'static [u8] = b"nimotsu\x00\x01\x00";
+const PUBLIC_KEY_PREFIX: &'static str = "荷物の公開鍵";
+const PRIVATE_KEY_PREFIX: &'static str = "荷物の秘密鍵";
+
 fn generate(out_path: &Path) -> io::Result<()> {
     let (pub_key, priv_key) = curve25519::gen_keypair(&mut OsRng);
-    print!("Public Key:\n荷物の公開鍵");
+    print!("Public Key:\n{}", PUBLIC_KEY_PREFIX);
     bytes_to_hex(&pub_key.bytes, &mut io::stdout())?;
     println!();
     let mut out_file = File::create(out_path)?;
-    write!(out_file, "# Public Key: 荷物の公開鍵")?;
+    write!(out_file, "# Public Key: {}", PUBLIC_KEY_PREFIX)?;
     bytes_to_hex(&pub_key.bytes, &mut out_file)?;
-    write!(out_file, "\n荷物の秘密鍵")?;
+    write!(out_file, "\n{}", PRIVATE_KEY_PREFIX)?;
     bytes_to_hex(&priv_key.bytes, &mut out_file)?;
     Ok(())
 }
 
 fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()> {
     let hex_string = recipient
-        .strip_prefix("荷物の公開鍵")
-        .ok_or(AppError::ParseError(
-            "recipient does not have public key prefix '荷物の公開鍵'".into(),
-        ))?;
+        .strip_prefix(PUBLIC_KEY_PREFIX)
+        .ok_or(AppError::ParseError(format!(
+            "recipient does not have public key prefix `{}`",
+            PUBLIC_KEY_PREFIX
+        )))?;
     if hex_string.len() != 64 {
         return Err(AppError::ParseError(format!(
             "invalid recipient size: {}",
@@ -166,10 +171,12 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
 
     let mut input_buf = Vec::new();
     File::open(in_path)?.read_to_end(&mut input_buf)?;
+
     let (ephemeral_pub, nonce) = encrypt_to_recipient(&recipient_key, &mut input_buf);
+
     let mut out_file = File::create(out_path)?;
     // Header
-    out_file.write_all(b"nimotsu\x00\x01\x00")?;
+    out_file.write_all(FILE_HEADER)?;
     // Public key, and nonce
     out_file.write_all(&ephemeral_pub.bytes)?;
     out_file.write_all(&nonce.bytes)?;
@@ -188,10 +195,11 @@ fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResul
             continue;
         }
         let hex_string = line
-            .strip_prefix("荷物の秘密鍵")
-            .ok_or(AppError::ParseError(
-                "key file does not have private key prefix '荷物の秘密鍵'".into(),
-            ))?;
+            .strip_prefix(PUBLIC_KEY_PREFIX)
+            .ok_or(AppError::ParseError(format!(
+                "key file does not have private key prefix `{}`",
+                PRIVATE_KEY_PREFIX
+            )))?;
         if hex_string.len() != 64 {
             return Err(AppError::ParseError(format!(
                 "invalid private key size size: {}",
@@ -210,7 +218,7 @@ fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResul
     let mut in_file = File::open(in_path)?;
     let mut header = [0u8; 10];
     in_file.read_exact(&mut header)?;
-    if &header != b"nimotsu\x00\x01\x00" {
+    if &header != FILE_HEADER {
         return Err(AppError::ParseError("Invalid header".into()));
     }
     let mut sender_pub = PubKey { bytes: [0; 32] };
@@ -219,6 +227,7 @@ fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResul
     in_file.read_exact(&mut nonce.bytes)?;
     let mut encrypted_data = Vec::new();
     in_file.read_to_end(&mut encrypted_data)?;
+
     decrypt_from_sender(&priv_key, &sender_pub, &nonce, &mut encrypted_data);
 
     let mut out_writer: Box<dyn io::Write> = match out_path {
