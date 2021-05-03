@@ -157,10 +157,8 @@ pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     let mut initial_state = InitialState::new(nonce, key, 1);
     let mut mixing_state = MixingState::empty();
     for chunk in data.chunks_mut(64) {
-        println!("{:X?}", initial_state);
         mixing_state.init(&initial_state);
         mixing_state.mix(&initial_state);
-        println!("{:X?}", mixing_state);
         mixing_state.encrypt(chunk);
         initial_state.increment();
     }
