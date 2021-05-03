@@ -50,6 +50,26 @@ enum Args {
     },
 }
 
+/// Represents the kind of error our application generatess
+#[derive(Debug)]
+enum AppError {
+    /// A parse error, with a string for information.
+    ///
+    /// This could probably be improved further.
+    ParseError(String),
+    /// An error that happened while doing IO of some kind
+    IO(io::Error),
+}
+
+impl From<io::Error> for AppError {
+    fn from(err: io::Error) -> Self {
+        AppError::IO(err)
+    }
+}
+
+/// The type of result produced our application
+type AppResult<T> = Result<T, AppError>;
+
 fn bytes_to_hex<W: io::Write>(data: &[u8], writer: &mut W) -> io::Result<()> {
     for byte in data {
         write!(writer, "{:02X}", byte)?;
@@ -78,19 +98,20 @@ fn decrypt(key_file: &Path, in_file: &Path, out_file: Option<&Path>) -> io::Resu
     unimplemented!()
 }
 
-fn main() -> io::Result<()> {
+fn main() -> AppResult<()> {
     let args = Args::from_args();
     match args {
-        Args::Generate { out_file } => generate(&out_file),
+        Args::Generate { out_file } => generate(&out_file)?,
         Args::Encrypt {
             recipient,
             out_file,
             in_file,
-        } => encrypt(&recipient, &out_file, &in_file),
+        } => encrypt(&recipient, &out_file, &in_file)?,
         Args::Decrypt {
             key_file,
             in_file,
             out_file,
-        } => decrypt(&key_file, &in_file, out_file.as_ref().map(|x| &*x as &Path)),
-    }
+        } => decrypt(&key_file, &in_file, out_file.as_ref().map(|x| &*x as &Path))?,
+    };
+    Ok(())
 }
