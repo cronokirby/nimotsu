@@ -7,7 +7,7 @@ use std::{
     fs::File,
     io::{self, Write},
 };
-use std::{io::Read, time::SystemTime};
+use std::io::Read;
 
 use blake3::derive_key;
 use chacha20::{encrypt, Key, Nonce};
@@ -109,7 +109,7 @@ fn nibble_from_char(char: u8) -> AppResult<u8> {
         return Ok(char - b'0');
     }
     if (b'A'..=b'F').contains(&char) {
-        return Ok(char - b'A');
+        return Ok(10 + char - b'A');
     }
     Err(AppError::ParseError(format!(
         "Invalid nibble value: {}",
