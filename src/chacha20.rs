@@ -1,6 +1,7 @@
 use rand::{CryptoRng, RngCore};
 use std::convert::TryInto;
 
+use crate::arch::{adc, mulc};
 /// A number that should only be used for a single encryption.
 ///
 /// For the purposes of this crate, randomly generating it is fine,
@@ -177,7 +178,74 @@ struct Poly1305Eater {
     /// The 128 bit value we add to finalize our tag calculation
     s: [u64; 2],
     /// The accumulator holding the current state we've calculated so far
+    ///
+    /// The top part of the accumulator should always be <= 5
     acc: [u64; 3],
+}
+
+impl Poly1305Eater {
+    fn update(&mut self, data: &[u8]) {
+        // Note: This code is inspired a great deal from:
+        // https://blog.filippo.io/a-literate-go-implementation-of-poly1305/
+
+        // A utility for (64, 64) -> 128 multiplication
+        #[inline(always)]
+        fn mul(a: u64, b: u64) -> u128 {
+            u128::from(a) * u128::from(b)
+        }
+
+        debug_assert!(data.len() <= 16);
+
+        // We want to interpret data as a 128 bit number, and then artificially
+        // set one bit further than its most significant bit, before adding it
+        // to our accumulator.
+        // How we handle this depends on how many bytes are in data. Usually,
+        // we have full 16 bytes, but our last chunk of data might have fewer.
+        if data.len() == 16 {
+            // In this case, our strategy is to add in the data as a 128 bit number,
+            // and then add 1 to the highest limb of acc.
+            let data_lo = u64::from_le_bytes(data[0..8].try_into().unwrap());
+            let data_hi = u64::from_le_bytes(data[8..].try_into().unwrap());
+            let mut carry = 0;
+            carry = adc(carry, data_lo, self.acc[0], &mut self.acc[0]);
+            carry = adc(carry, data_hi, self.acc[1], &mut self.acc[1]);
+            self.acc[2] += 1 + u64::from(carry);
+        }
+
+        // Now, we calculate acc * r % 2^130 - 5
+
+        // First, calculate all the 128 overlapping sections of the product
+        let m0 = mul(self.acc[0], self.r[0]);
+        // Because of masking r, these additions don't overflow
+        let m1 = mul(self.acc[1], self.r[0]) + mul(self.acc[0], self.r[1]);
+        // Because the top limb of acc is <= 5, we can multiply with smaller results
+        let m2 = u128::from(self.acc[2] * self.r[0]) + mul(self.acc[1], self.r[1]);
+        let m3 = self.acc[2] * self.r[1];
+        // Now, combine all of the overlapping results together, over 4 limbs
+        let mut cc1 = 0;
+        self.acc[0] = m0 as u64;
+        let mut carry = 0;
+        carry = adc(carry, (m0 >> 64) as u64, m1 as u64, &mut self.acc[1]);
+        carry = adc(carry, (m1 >> 64) as u64, m2 as u64, &mut self.acc[2]);
+        adc(carry, (m2 >> 64) as u64, m3, &mut cc1);
+
+        let mut cc0 = self.acc[2] & !0b11;
+        self.acc[2] &= 0b11;
+
+        // Now, we need to add 5 * c to acc, which we accomplish by adding cc, and then (cc >> 2)
+        let mut carry = 0;
+        carry = adc(carry, cc0, self.acc[0], &mut self.acc[0]);
+        carry = adc(carry, cc1, self.acc[1], &mut self.acc[1]);
+        self.acc[2] += u64::from(carry);
+        // Shift cc by 2 to get c
+        cc0 = (cc1 << 62) | (cc0 >> 2);
+        cc1 >>= 2;
+
+        carry = 0;
+        carry = adc(carry, cc0, self.acc[0], &mut self.acc[0]);
+        carry = adc(carry, cc1, self.acc[1], &mut self.acc[1]);
+        self.acc[2] += u64::from(carry);
+    }
 }
 
 #[cfg(test)]

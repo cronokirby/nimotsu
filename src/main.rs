@@ -15,6 +15,7 @@ use curve25519::{exchange, gen_keypair, PrivKey, PubKey};
 use rand::rngs::OsRng;
 use structopt::StructOpt;
 
+mod arch;
 mod blake3;
 mod chacha20;
 mod curve25519;
