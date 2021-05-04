@@ -198,7 +198,7 @@ struct Poly1305Eater {
 }
 
 impl Poly1305Eater {
-    fn new(mut r: [u64; 2], s: [u64; 2]) -> Self {
+    fn new(r: [u64; 2], s: [u64; 2]) -> Self {
         Poly1305Eater {
             r: [r[0] & 0x0FFFFFFC0FFFFFFF, r[1] & 0x0FFFFFFC0FFFFFFC],
             s,

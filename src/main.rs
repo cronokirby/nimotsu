@@ -195,7 +195,7 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
     // Public key, nonce, tag, and then ciphertext
     out_file.write_all(&ephemeral_pub.bytes)?;
     out_file.write_all(&nonce.bytes)?;
-    out_file.write_all(&tag.bytes);
+    out_file.write_all(&tag.bytes)?;
     out_file.write_all(&input_buf)?;
     Ok(())
 }
