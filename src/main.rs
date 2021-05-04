@@ -195,7 +195,7 @@ fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResul
             continue;
         }
         let hex_string = line
-            .strip_prefix(PUBLIC_KEY_PREFIX)
+            .strip_prefix(PRIVATE_KEY_PREFIX)
             .ok_or(AppError::ParseError(format!(
                 "key file does not have private key prefix `{}`",
                 PRIVATE_KEY_PREFIX
