@@ -1,7 +1,8 @@
 use rand::{CryptoRng, RngCore};
 use std::convert::TryInto;
+use subtle::{Choice, ConditionallySelectable};
 
-use crate::arch::{adc, mulc};
+use crate::arch::{adc, sbb};
 /// A number that should only be used for a single encryption.
 ///
 /// For the purposes of this crate, randomly generating it is fine,
@@ -165,6 +166,12 @@ pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     }
 }
 
+struct Tag {
+    bytes: [u8; 16],
+}
+
+const P1305: [u64; 3] = [0xfffffffffffffffb, 0xffffffffffffffff, 0x3];
+
 /// This consumes our input chunk by chunk, progressively calculating an authentication tag
 ///
 /// The idea is to interpret the data as a polynomial with 128 bit coefficients, evaluating
@@ -245,6 +252,30 @@ impl Poly1305Eater {
         carry = adc(carry, cc0, self.acc[0], &mut self.acc[0]);
         carry = adc(carry, cc1, self.acc[1], &mut self.acc[1]);
         self.acc[2] += u64::from(carry);
+    }
+
+    fn finalize(&mut self) -> Tag {
+        let mut out_lo = 0;
+        let mut out_hi = 0;
+
+        let mut borrow = 0;
+        borrow = sbb(borrow, self.acc[0], P1305[0], &mut out_lo);
+        borrow = sbb(borrow, self.acc[1], P1305[1], &mut out_hi);
+        let mut dont_care = 0;
+        borrow = sbb(borrow, self.acc[2], P1305[2], &mut dont_care);
+
+        let underflow = Choice::from(borrow);
+        out_lo.conditional_assign(&self.acc[0], underflow);
+        out_hi.conditional_assign(&self.acc[1], underflow);
+
+        let mut carry = 0;
+        carry = adc(carry, self.s[0], out_lo, &mut out_lo);
+        adc(carry, self.s[1], out_hi, &mut out_hi);
+
+        let mut tag_bytes = [0; 16];
+        tag_bytes[..8].copy_from_slice(&out_lo.to_le_bytes());
+        tag_bytes[8..].copy_from_slice(&out_hi.to_le_bytes());
+        Tag { bytes: tag_bytes }
     }
 }
 
