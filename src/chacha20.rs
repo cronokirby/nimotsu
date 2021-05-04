@@ -166,6 +166,7 @@ pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     }
 }
 
+#[derive(Debug)]
 struct Tag {
     bytes: [u8; 16],
 }
@@ -191,6 +192,14 @@ struct Poly1305Eater {
 }
 
 impl Poly1305Eater {
+    fn new(mut r: [u64; 2], s: [u64; 2]) -> Self {
+        Poly1305Eater {
+            r: [r[0] & 0x0FFFFFFC0FFFFFFF, r[1] & 0x0FFFFFFC0FFFFFFC],
+            s,
+            acc: [0; 3],
+        }
+    }
+
     fn update(&mut self, data: &[u8]) {
         // Note: This code is inspired a great deal from:
         // https://blog.filippo.io/a-literate-go-implementation-of-poly1305/
@@ -217,6 +226,18 @@ impl Poly1305Eater {
             carry = adc(carry, data_lo, self.acc[0], &mut self.acc[0]);
             carry = adc(carry, data_hi, self.acc[1], &mut self.acc[1]);
             self.acc[2] += 1 + u64::from(carry);
+        } else {
+            let mut padded = [0; 16];
+            padded[..data.len()].copy_from_slice(data);
+            padded[data.len()] = 1;
+
+            let data_lo = u64::from_le_bytes(padded[0..8].try_into().unwrap());
+            let data_hi = u64::from_le_bytes(padded[8..].try_into().unwrap());
+
+            let mut carry = 0;
+            carry = adc(carry, data_lo, self.acc[0], &mut self.acc[0]);
+            carry = adc(carry, data_hi, self.acc[1], &mut self.acc[1]);
+            self.acc[2] += u64::from(carry);
         }
 
         // Now, we calculate acc * r % 2^130 - 5
@@ -312,5 +333,22 @@ mod test {
         let mut bytes = text.as_bytes().to_owned();
         encrypt(&nonce, &key, &mut bytes);
         assert_eq!(&expected[..], &bytes);
+    }
+
+    #[test]
+    fn test_poly1305_vector1() {
+        let r = [0x336d_5557_78be_d685, 0xa806_d542_fe52_447f];
+        let s = [0xfdb2_0dfb_8a80_0301, 0x1bf5_4941_aff6_bf4a];
+        let mut eater = Poly1305Eater::new(r, s);
+        let data = b"Cryptographic Forum Research Group";
+        for chunk in data.chunks(16) {
+            eater.update(chunk);
+        }
+        let tag = eater.finalize();
+        let expected = [
+            0xa8, 0x06, 0x1d, 0xc1, 0x30, 0x51, 0x36, 0xc6, 0xc2, 0x2b, 0x8b, 0xaf, 0x0c, 0x01,
+            0x27, 0xa9,
+        ];
+        assert_eq!(tag.bytes, expected);
     }
 }
