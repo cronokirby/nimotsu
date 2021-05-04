@@ -164,6 +164,22 @@ pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     }
 }
 
+/// This consumes our input chunk by chunk, progressively calculating an authentication tag
+///
+/// The idea is to interpret the data as a polynomial with 128 bit coefficients, evaluating
+/// it at the first secret r, and then finalizing by adding the final secret s.
+#[derive(Debug)]
+struct Poly1305Eater {
+    /// The 128 bit value at which we evaluate the polynomial.
+    ///
+    /// This value should already be clamped.
+    r: [u64; 2],
+    /// The 128 bit value we add to finalize our tag calculation
+    s: [u64; 2],
+    /// The accumulator holding the current state we've calculated so far
+    acc: [u64; 3],
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
