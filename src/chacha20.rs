@@ -150,12 +150,12 @@ impl MixingState {
     }
 }
 
-/// encrypt a slice of data in place, using a unique nonce, and an encryption key.
+/// Run the chacha20 cipher over a slice of data in place, using a unique nonce, and an encryption key.
 ///
 /// The nonce should never be reused with the same key for different encryptions.
 /// For our purposes in this crate, it's safe to generate the nonce randomly, because
 /// we use ephemeral keys.
-pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
+fn chacha20(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     let mut initial_state = InitialState::new(nonce, key, 1);
     let mut mixing_state = MixingState::empty();
     for chunk in data.chunks_mut(64) {
@@ -167,8 +167,8 @@ pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) {
 }
 
 #[derive(Debug)]
-struct Tag {
-    bytes: [u8; 16],
+pub struct Tag {
+    pub bytes: [u8; 16],
 }
 
 const P1305: [u64; 3] = [0xfffffffffffffffb, 0xffffffffffffffff, 0x3];
@@ -315,6 +315,29 @@ impl Poly1305Eater {
         tag_bytes[8..].copy_from_slice(&out_hi.to_le_bytes());
         Tag { bytes: tag_bytes }
     }
+}
+
+pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) -> Tag {
+    chacha20(nonce, key, data);
+    let mut eater = Poly1305Eater::derived(nonce, key);
+
+    let extra_cipher = data.len() & 0xF;
+    let extra_cipher_start = data.len() - extra_cipher;
+    for chunk in data[..extra_cipher_start].chunks_exact(16) {
+        eater.update(chunk);
+    }
+    if extra_cipher != 0 {
+        let mut padded = [0; 16];
+        padded[..extra_cipher].clone_from_slice(&data[extra_cipher_start..]);
+        eater.update(&padded);
+    }
+    // This contains len(AAD) followed by len(ciphertext).
+    // We have no associated data, so we just fill in the last 8 bytes
+    let mut length_data = [0; 16];
+    length_data[8..].copy_from_slice(&(data.len() as u64).to_le_bytes());
+    eater.update(&length_data);
+
+    eater.finalize()
 }
 
 #[cfg(test)]
