@@ -200,6 +200,23 @@ impl Poly1305Eater {
         }
     }
 
+    fn derived(nonce: &Nonce, key: &Key) -> Self {
+        let initial_state = InitialState::new(nonce, key, 0);
+        let mut mixing_state = MixingState::empty();
+        mixing_state.init(&initial_state);
+        mixing_state.mix(&initial_state);
+        Self::new(
+            [
+                (u64::from(mixing_state.0[1]) << 32) | u64::from(mixing_state.0[0]),
+                (u64::from(mixing_state.0[3]) << 32) | u64::from(mixing_state.0[2]),
+            ],
+            [
+                (u64::from(mixing_state.0[5]) << 32) | u64::from(mixing_state.0[4]),
+                (u64::from(mixing_state.0[7]) << 32) | u64::from(mixing_state.0[6]),
+            ],
+        )
+    }
+
     fn update(&mut self, data: &[u8]) {
         // Note: This code is inspired a great deal from:
         // https://blog.filippo.io/a-literate-go-implementation-of-poly1305/
