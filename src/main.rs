@@ -10,7 +10,7 @@ use std::{
 };
 
 use blake3::derive_key;
-use chacha20::{encrypt, Key, Nonce};
+use chacha20::{decrypt, encrypt, DecryptionError, Key, Nonce, Tag};
 use curve25519::{exchange, gen_keypair, PrivKey, PubKey};
 use rand::rngs::OsRng;
 use structopt::StructOpt;
@@ -22,23 +22,29 @@ mod curve25519;
 
 const DERIVE_KEY_CONTEXT: &'static str = "荷物 2021-05-03 derive key context";
 
-fn encrypt_to_recipient(recipient: &PubKey, data: &mut [u8]) -> (PubKey, Nonce) {
+fn encrypt_to_recipient(recipient: &PubKey, data: &mut [u8]) -> (PubKey, Nonce, Tag) {
     let (ephemeral_pub, ephemeral_priv) = gen_keypair(&mut OsRng);
     let shared_secret = exchange(&ephemeral_priv, recipient);
     let derived_key = Key {
         bytes: derive_key(DERIVE_KEY_CONTEXT, &shared_secret.bytes),
     };
     let nonce = Nonce::random(&mut OsRng);
-    encrypt(&nonce, &derived_key, data);
-    (ephemeral_pub, nonce)
+    let tag = encrypt(&nonce, &derived_key, data);
+    (ephemeral_pub, nonce, tag)
 }
 
-fn decrypt_from_sender(my_priv: &PrivKey, sender: &PubKey, nonce: &Nonce, data: &mut [u8]) {
+fn decrypt_from_sender(
+    my_priv: &PrivKey,
+    sender: &PubKey,
+    nonce: &Nonce,
+    tag: &Tag,
+    data: &mut [u8],
+) -> Result<(), DecryptionError> {
     let shared_secret = exchange(my_priv, sender);
     let derived_key = Key {
         bytes: derive_key(DERIVE_KEY_CONTEXT, &shared_secret.bytes),
     };
-    encrypt(&nonce, &derived_key, data);
+    decrypt(&nonce, &derived_key, &tag, data)
 }
 
 #[derive(StructOpt, Debug)]
@@ -87,11 +93,19 @@ enum AppError {
     ParseError(String),
     /// An error that happened while doing IO of some kind
     IO(io::Error),
+    /// An error that happened while decrypting data
+    DecryptionError(DecryptionError),
 }
 
 impl From<io::Error> for AppError {
     fn from(err: io::Error) -> Self {
         AppError::IO(err)
+    }
+}
+
+impl From<DecryptionError> for AppError {
+    fn from(err: DecryptionError) -> Self {
+        AppError::DecryptionError(err)
     }
 }
 
@@ -173,19 +187,20 @@ fn do_encrypt(recipient: &str, out_path: &Path, in_path: &Path) -> AppResult<()>
     let mut input_buf = Vec::new();
     File::open(in_path)?.read_to_end(&mut input_buf)?;
 
-    let (ephemeral_pub, nonce) = encrypt_to_recipient(&recipient_key, &mut input_buf);
+    let (ephemeral_pub, nonce, tag) = encrypt_to_recipient(&recipient_key, &mut input_buf);
 
     let mut out_file = File::create(out_path)?;
     // Header
     out_file.write_all(FILE_HEADER)?;
-    // Public key, and nonce
+    // Public key, nonce, tag, and then ciphertext
     out_file.write_all(&ephemeral_pub.bytes)?;
     out_file.write_all(&nonce.bytes)?;
+    out_file.write_all(&tag.bytes);
     out_file.write_all(&input_buf)?;
     Ok(())
 }
 
-fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResult<()> {
+fn do_decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResult<()> {
     let mut priv_key_bytes = Vec::with_capacity(64);
     let mut maybe_priv_key = None;
     let key_file = File::open(key_path)?;
@@ -226,10 +241,12 @@ fn decrypt(key_path: &Path, in_path: &Path, out_path: Option<&Path>) -> AppResul
     in_file.read_exact(&mut sender_pub.bytes)?;
     let mut nonce = Nonce { bytes: [0; 12] };
     in_file.read_exact(&mut nonce.bytes)?;
+    let mut tag = Tag { bytes: [0; 16] };
+    in_file.read_exact(&mut tag.bytes)?;
     let mut encrypted_data = Vec::new();
     in_file.read_to_end(&mut encrypted_data)?;
 
-    decrypt_from_sender(&priv_key, &sender_pub, &nonce, &mut encrypted_data);
+    decrypt_from_sender(&priv_key, &sender_pub, &nonce, &tag, &mut encrypted_data)?;
 
     let mut out_writer: Box<dyn io::Write> = match out_path {
         Some(path) => Box::new(File::create(path)?),
@@ -252,7 +269,7 @@ fn main() -> AppResult<()> {
             key_file,
             in_file,
             out_file,
-        } => decrypt(&key_file, &in_file, out_file.as_ref().map(|x| &*x as &Path))?,
+        } => do_decrypt(&key_file, &in_file, out_file.as_ref().map(|x| &*x as &Path))?,
     };
     Ok(())
 }

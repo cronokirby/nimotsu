@@ -1,6 +1,6 @@
 use rand::{CryptoRng, RngCore};
 use std::convert::TryInto;
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 use crate::arch::{adc, sbb};
 /// A number that should only be used for a single encryption.
@@ -171,6 +171,12 @@ pub struct Tag {
     pub bytes: [u8; 16],
 }
 
+impl ConstantTimeEq for Tag {
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.bytes.ct_eq(&other.bytes)
+    }
+}
+
 const P1305: [u64; 3] = [0xfffffffffffffffb, 0xffffffffffffffff, 0x3];
 
 /// This consumes our input chunk by chunk, progressively calculating an authentication tag
@@ -315,29 +321,50 @@ impl Poly1305Eater {
         tag_bytes[8..].copy_from_slice(&out_hi.to_le_bytes());
         Tag { bytes: tag_bytes }
     }
+
+    fn eat_ciphertext(mut self, ciphertext: &[u8]) -> Tag {
+        let extra_cipher = ciphertext.len() & 0xF;
+        let extra_cipher_start = ciphertext.len() - extra_cipher;
+        for chunk in ciphertext[..extra_cipher_start].chunks_exact(16) {
+            self.update(chunk);
+        }
+        if extra_cipher != 0 {
+            let mut padded = [0; 16];
+            padded[..extra_cipher].clone_from_slice(&ciphertext[extra_cipher_start..]);
+            self.update(&padded);
+        }
+        // This contains len(AAD) followed by len(ciphertext).
+        // We have no associated data, so we just fill in the last 8 bytes
+        let mut length_data = [0; 16];
+        length_data[8..].copy_from_slice(&(ciphertext.len() as u64).to_le_bytes());
+        self.update(&length_data);
+
+        self.finalize()
+    }
 }
 
 pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) -> Tag {
     chacha20(nonce, key, data);
-    let mut eater = Poly1305Eater::derived(nonce, key);
+    Poly1305Eater::derived(nonce, key).eat_ciphertext(data)
+}
 
-    let extra_cipher = data.len() & 0xF;
-    let extra_cipher_start = data.len() - extra_cipher;
-    for chunk in data[..extra_cipher_start].chunks_exact(16) {
-        eater.update(chunk);
-    }
-    if extra_cipher != 0 {
-        let mut padded = [0; 16];
-        padded[..extra_cipher].clone_from_slice(&data[extra_cipher_start..]);
-        eater.update(&padded);
-    }
-    // This contains len(AAD) followed by len(ciphertext).
-    // We have no associated data, so we just fill in the last 8 bytes
-    let mut length_data = [0; 16];
-    length_data[8..].copy_from_slice(&(data.len() as u64).to_le_bytes());
-    eater.update(&length_data);
+#[derive(Debug)]
+pub enum DecryptionError {
+    BadTag,
+}
 
-    eater.finalize()
+pub fn decrypt(
+    nonce: &Nonce,
+    key: &Key,
+    tag: &Tag,
+    ciphertext: &mut [u8],
+) -> Result<(), DecryptionError> {
+    let actual_tag = Poly1305Eater::derived(nonce, key).eat_ciphertext(ciphertext);
+    if !bool::from(actual_tag.ct_eq(tag)) {
+        return Err(DecryptionError::BadTag);
+    }
+    chacha20(nonce, key, ciphertext);
+    Ok(())
 }
 
 #[cfg(test)]
