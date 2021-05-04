@@ -121,7 +121,7 @@ Different algorithms can used for the components of this exchange, in practice t
 
 - `x25519` for key-pairs, and for exchanging secrets
 - `Blake3` for key derivation
-- `ChaCha20` for encryption (I haven't implemented `Poly1305` yet)
+- `ChaCha20-Poly1305` for encryption
 
 This program is really just an excuse to having fun implementing all of these from scratch :)
 `x25519` is the most fun to implement, btw.
