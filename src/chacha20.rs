@@ -166,6 +166,11 @@ fn chacha20(nonce: &Nonce, key: &Key, data: &mut [u8]) {
     }
 }
 
+/// Represents an authentication tag, attested the integrity of our message.
+///
+/// This will be produced after encrypting some data, and should be treated
+/// as an abstract blob, allowing you verify the integrity of some data when
+/// decrypting it subsequently.
 #[derive(Debug)]
 pub struct Tag {
     pub bytes: [u8; 16],
@@ -177,9 +182,13 @@ impl ConstantTimeEq for Tag {
     }
 }
 
+// The prime number 2^130 - 5
 const P1305: [u64; 3] = [0xfffffffffffffffb, 0xffffffffffffffff, 0x3];
 
 /// This consumes our input chunk by chunk, progressively calculating an authentication tag
+///
+/// The idea is to first initialize the eater, and then calling `update` with chunks of <= 16 bytes,
+/// finally, a tag can be produced by calling `finalize`, consuming the eater.
 ///
 /// The idea is to interpret the data as a polynomial with 128 bit coefficients, evaluating
 /// it at the first secret r, and then finalizing by adding the final secret s.
@@ -200,12 +209,17 @@ struct Poly1305Eater {
 impl Poly1305Eater {
     fn new(r: [u64; 2], s: [u64; 2]) -> Self {
         Poly1305Eater {
+            // When initializing our eater, we need to clamp the value of r with this mask
             r: [r[0] & 0x0FFFFFFC0FFFFFFF, r[1] & 0x0FFFFFFC0FFFFFFC],
             s,
             acc: [0; 3],
         }
     }
 
+    /// derived lets us initialize our authenticator using a nonce and key used for encryption
+    ///
+    /// This safely derives a one-time key for authentication from the key and the nonce,
+    /// using the block function provided by ChaCha20.
     fn derived(nonce: &Nonce, key: &Key) -> Self {
         let initial_state = InitialState::new(nonce, key, 0);
         let mut mixing_state = MixingState::empty();
@@ -322,7 +336,12 @@ impl Poly1305Eater {
         Tag { bytes: tag_bytes }
     }
 
+    /// eat_ciphertext consumes a ciphertext of an arbitrary length, producing a tag
+    ///
+    /// This actually updates things in accordance to the ChaCha20-Poly1305 AEAD construction,
+    /// meaning that it also authenticates padding, and the length of the ciphertext.
     fn eat_ciphertext(mut self, ciphertext: &[u8]) -> Tag {
+        // The number of bytes past the last chunk of 16 bytes
         let extra_cipher = ciphertext.len() & 0xF;
         let extra_cipher_start = ciphertext.len() - extra_cipher;
         for chunk in ciphertext[..extra_cipher_start].chunks_exact(16) {
@@ -343,16 +362,29 @@ impl Poly1305Eater {
     }
 }
 
+/// encrypt data in place, using a nonce, and a key, producing an authentication tag
+///
+/// A (nonce, key) pair should only ever be used once for encryption. For the purposes
+/// of our application, where a new key is generated each time, it's safe to randomly
+/// generate the nonce.
 pub fn encrypt(nonce: &Nonce, key: &Key, data: &mut [u8]) -> Tag {
     chacha20(nonce, key, data);
     Poly1305Eater::derived(nonce, key).eat_ciphertext(data)
 }
 
+/// Represents some kind of error that can happen during decryption.
 #[derive(Debug)]
 pub enum DecryptionError {
+    /// The tag we expected to see didn't match the tag we calculated on the data
+    ///
+    /// This indicates corruption or tampering on the data.
     BadTag,
 }
 
+/// decrypt a ciphertext in place, using a nonce, and a key, verifying the authentication tag
+///
+/// If this does not return `Ok`, then the application shouldn't act on the decrypted
+/// results in any way.
 pub fn decrypt(
     nonce: &Nonce,
     key: &Key,
@@ -360,6 +392,7 @@ pub fn decrypt(
     ciphertext: &mut [u8],
 ) -> Result<(), DecryptionError> {
     let actual_tag = Poly1305Eater::derived(nonce, key).eat_ciphertext(ciphertext);
+    // A constant time comparison is necessary to prevent attacks
     if !bool::from(actual_tag.ct_eq(tag)) {
         return Err(DecryptionError::BadTag);
     }
