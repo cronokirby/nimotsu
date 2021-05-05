@@ -238,6 +238,9 @@ impl Poly1305Eater {
         )
     }
 
+    // update this eater with a chunk of data.
+    //
+    // The data should be at most 16 bytes in length.
     fn update(&mut self, data: &[u8]) {
         // Note: This code is inspired a great deal from:
         // https://blog.filippo.io/a-literate-go-implementation-of-poly1305/
@@ -255,11 +258,12 @@ impl Poly1305Eater {
         // to our accumulator.
         // How we handle this depends on how many bytes are in data. Usually,
         // we have full 16 bytes, but our last chunk of data might have fewer.
-        if data.len() == 16 {
+        if data.len() >= 16 {
             // In this case, our strategy is to add in the data as a 128 bit number,
             // and then add 1 to the highest limb of acc.
             let data_lo = u64::from_le_bytes(data[0..8].try_into().unwrap());
             let data_hi = u64::from_le_bytes(data[8..].try_into().unwrap());
+
             let mut carry = 0;
             carry = adc(carry, data_lo, self.acc[0], &mut self.acc[0]);
             carry = adc(carry, data_hi, self.acc[1], &mut self.acc[1]);
@@ -267,6 +271,8 @@ impl Poly1305Eater {
         } else {
             let mut padded = [0; 16];
             padded[..data.len()].copy_from_slice(data);
+            // This won't overflow, since data.len() < 16. This correctly sets
+            // one bit past the end of the number
             padded[data.len()] = 1;
 
             let data_lo = u64::from_le_bytes(padded[0..8].try_into().unwrap());
@@ -287,18 +293,22 @@ impl Poly1305Eater {
         // Because the top limb of acc is <= 5, we can multiply with smaller results
         let m2 = u128::from(self.acc[2] * self.r[0]) + mul(self.acc[1], self.r[1]);
         let m3 = self.acc[2] * self.r[1];
+
         // Now, combine all of the overlapping results together, over 4 limbs
-        let mut cc1 = 0;
         self.acc[0] = m0 as u64;
         let mut carry = 0;
         carry = adc(carry, (m0 >> 64) as u64, m1 as u64, &mut self.acc[1]);
         carry = adc(carry, (m1 >> 64) as u64, m2 as u64, &mut self.acc[2]);
+        let mut cc1 = 0;
         adc(carry, (m2 >> 64) as u64, m3, &mut cc1);
-
+        // We want to split our result at the 130 bit mark. This splits things into
+        // c, for the high part, and acc, for the low part. By only keeping the low two
+        // bits of acc[2], we ensure it stops at 130 bits. In cc, we just clear the lower 2 bits,
+        // this makes cc = 4 * c.
         let mut cc0 = self.acc[2] & !0b11;
         self.acc[2] &= 0b11;
-
-        // Now, we need to add 5 * c to acc, which we accomplish by adding cc, and then (cc >> 2)
+        // Now, we need to add 5 * c to acc, which we accomplish by adding cc, and then (cc >> 2).
+        // This works out, since cc = 4 * c
         let mut carry = 0;
         carry = adc(carry, cc0, self.acc[0], &mut self.acc[0]);
         carry = adc(carry, cc1, self.acc[1], &mut self.acc[1]);
@@ -306,11 +316,12 @@ impl Poly1305Eater {
         // Shift cc by 2 to get c
         cc0 = (cc1 << 62) | (cc0 >> 2);
         cc1 >>= 2;
-
+        // Finally, add it back in again
         carry = 0;
         carry = adc(carry, cc0, self.acc[0], &mut self.acc[0]);
         carry = adc(carry, cc1, self.acc[1], &mut self.acc[1]);
         self.acc[2] += u64::from(carry);
+        // acc[2] is at most 3 + 1 + 1 = 5, satisfying our constraint
     }
 
     /// finalize should be called after all the data to authenticate has been processed
