@@ -202,7 +202,8 @@ struct Poly1305Eater {
     s: [u64; 2],
     /// The accumulator holding the current state we've calculated so far
     ///
-    /// The top part of the accumulator should always be <= 5
+    /// The top part of the accumulator should always be <= 5, but acc is not necessarily
+    /// reduced modulo P.
     acc: [u64; 3],
 }
 
@@ -312,20 +313,29 @@ impl Poly1305Eater {
         self.acc[2] += u64::from(carry);
     }
 
-    fn finalize(&mut self) -> Tag {
+    /// finalize should be called after all the data to authenticate has been processed
+    ///
+    /// This produces a Tag for authentication. To make sure that no more input is passed
+    /// after finalization, this consumes the eater.
+    fn finalize(self) -> Tag {
+        // We calculate out <- (acc % P) + s % 2^128, so we need
+        // two limbs to hold the output
         let mut out_lo = 0;
         let mut out_hi = 0;
 
+        // Now, acc isn't necessarily reduced % P, but will be < 2P,
+        // so a single subtraction of P suffices to reduce it, if necessary.
         let mut borrow = 0;
         borrow = sbb(borrow, self.acc[0], P1305[0], &mut out_lo);
         borrow = sbb(borrow, self.acc[1], P1305[1], &mut out_hi);
         let mut dont_care = 0;
         borrow = sbb(borrow, self.acc[2], P1305[2], &mut dont_care);
-
+        // If an underflow occurred, then acc was already reduced, and we should
+        // use that value instead
         let underflow = Choice::from(borrow);
         out_lo.conditional_assign(&self.acc[0], underflow);
         out_hi.conditional_assign(&self.acc[1], underflow);
-
+        // Now, we just add in s, without carrying about the overflow bit
         let mut carry = 0;
         carry = adc(carry, self.s[0], out_lo, &mut out_lo);
         adc(carry, self.s[1], out_hi, &mut out_hi);
