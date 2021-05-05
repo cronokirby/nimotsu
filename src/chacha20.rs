@@ -301,10 +301,12 @@ impl Poly1305Eater {
         carry = adc(carry, (m1 >> 64) as u64, m2 as u64, &mut self.acc[2]);
         let mut cc1 = 0;
         adc(carry, (m2 >> 64) as u64, m3, &mut cc1);
-        // We want to split our result at the 130 bit mark. This splits things into
-        // c, for the high part, and acc, for the low part. By only keeping the low two
-        // bits of acc[2], we ensure it stops at 130 bits. In cc, we just clear the lower 2 bits,
-        // this makes cc = 4 * c.
+        // Now, we want to reduce things modulo P = 2^130 - 5. If we we write things as
+        // c * 2^130 + acc, then modulo P this is 5 * c + acc. Because of this, we split
+        // things at the 130 bit point, to get c and acc.
+        //
+        // By only keeping the low two bits of acc[2], we ensure it stops at 130 bits.
+        // In cc, we just clear the lower 2 bits, this makes cc = 4 * c
         let mut cc0 = self.acc[2] & !0b11;
         self.acc[2] &= 0b11;
         // Now, we need to add 5 * c to acc, which we accomplish by adding cc, and then (cc >> 2).
