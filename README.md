@@ -119,9 +119,9 @@ def decrypt(priv_key, send_key, nonce, ciphertext) {
 
 Different algorithms can used for the components of this exchange, in practice the following are used:
 
-- `x25519` for key-pairs, and for exchanging secrets
-- `Blake3` for key derivation
+- `X25519` for key-pairs, and for exchanging secrets
+- `BLAKE3` for key derivation
 - `ChaCha20-Poly1305` for encryption
 
 This program is really just an excuse to having fun implementing all of these from scratch :)
-`x25519` is the most fun to implement, btw.
+`X25519` is the most fun to implement, btw.
